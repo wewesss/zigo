@@ -6,7 +6,7 @@ local mathType = compat.mathType
 local type, next, pcall, tostring = type, next, pcall, tostring
 local huge = math.huge
 local SAFE = 2 ^ 53
-local getmetatable = getmetatable
+local getmetatable, rawequal = getmetatable, rawequal
 local format, concat = string.format, table.concat
 
 local M = {}
@@ -124,6 +124,9 @@ leaves.boolean = function(_, _, v)
 end
 
 leaves.literal = function(ctx, d, v)
+    if compat.ffi then
+        return { "not rawequal(" .. v .. ", " .. literalExpr(ctx, d.value) .. ")" }
+    end
     return { v .. " ~= " .. literalExpr(ctx, d.value) }
 end
 
@@ -140,6 +143,39 @@ leaves.unknown = leaves.any
 leaves.never = function()
     return { "true" }
 end
+
+leaves.null = function(ctx, d, v)
+    return { "not rawequal(" .. v .. ", " .. const(ctx, d.value) .. ")" }
+end
+
+leaves.func = function(_, _, v)
+    return { "type(" .. v .. ") ~= \"function\"" }
+end
+
+leaves.userdata = function(ctx, d, v)
+    local conds = { "type(" .. v .. ") ~= \"userdata\"" }
+    if d.mt ~= nil then
+        conds[2] = "not rawequal(getmetatable(" .. v .. "), " .. const(ctx, d.mt) .. ")"
+    end
+    return conds
+end
+
+leaves.instanceOf = function(ctx, d, v)
+    return {
+        "(type(" .. v .. ") ~= \"table\" and type(" .. v .. ") ~= \"userdata\")",
+        "not rawequal(getmetatable(" .. v .. "), " .. const(ctx, d.mt) .. ")",
+    }
+end
+
+local function delegated(kind)
+    return function(ctx, d, v)
+        if not compat.istype then return { "true" } end
+        return { "not " .. const(ctx, closures.testBuilders[kind](d)) .. "(" .. v .. ")" }
+    end
+end
+
+leaves.cdata = delegated("cdata")
+leaves.notNullPtr = delegated("notNullPtr")
 
 local gen, build
 
@@ -170,6 +206,19 @@ local function tableGuard(ctx, d, v)
     if not d.meta then
         add(ctx, "if getmetatable(" .. v .. ") ~= nil then return " .. slowCall(ctx) .. " end")
     end
+end
+
+local pointerKinds = { cdata = true, notNullPtr = true }
+
+local function skipGuard(ctx, d, v, kind)
+    local present = v .. " ~= nil"
+    if compat.ffi and pointerKinds[kind] then present = "not rawequal(" .. v .. ", nil)" end
+    if d.nullable then
+        local sentinel = "not rawequal(" .. v .. ", " .. const(ctx, d.nullValue) .. ")"
+        if d.optional then return present .. " and " .. sentinel end
+        return sentinel
+    end
+    if d.optional then return present end
 end
 
 local function rejectsNil(node)
@@ -336,8 +385,9 @@ gen = function(ctx, node, v, s)
         local conds = leaf(ctx, d, v)
         if #conds == 0 then return end
         local cond = concat(conds, " or ")
-        if d.optional then
-            add(ctx, "if " .. v .. " ~= nil and (" .. cond .. ") then return false end")
+        local guard = skipGuard(ctx, d, v, kind)
+        if guard then
+            add(ctx, "if " .. guard .. " and (" .. cond .. ") then return false end")
         else
             add(ctx, "if " .. cond .. " then return false end")
         end
@@ -352,9 +402,10 @@ gen = function(ctx, node, v, s)
         add(ctx, "if not " .. const(ctx, fn) .. "(" .. v .. dArg(ctx, s) .. ") then return false end")
         return
     end
-    if d.optional then add(ctx, "if " .. v .. " ~= nil then") end
+    local guard = skipGuard(ctx, d, v, kind)
+    if guard then add(ctx, "if " .. guard .. " then") end
     container(ctx, d, v, s)
-    if d.optional then add(ctx, "end") end
+    if guard then add(ctx, "end") end
 end
 
 function build(node, lim, dyn)
@@ -367,7 +418,7 @@ function build(node, lim, dyn)
         if not reference then reference = closures.test(node, lim, dyn) end
         return reference(root, D)
     end
-    local head = { "local KT, type, next, getmetatable, mathType, slow, istype, I64 = ..." }
+    local head = { "local KT, type, next, getmetatable, mathType, slow, istype, I64, rawequal = ..." }
     local inline = ctx.nc < MAX_INLINE_CONSTS and ctx.nc or MAX_INLINE_CONSTS
     if inline > 0 then
         local names, values = {}, {}
@@ -386,7 +437,7 @@ function build(node, lim, dyn)
     local src = concat(head, "\n") .. "\n" .. body .. "\nreturn true\nend"
     local chunk = loader(src, "=zigo.codegen")
     if not chunk then return nil end
-    return chunk(ctx.consts, type, next, getmetatable, mathType, slow, compat.istype, compat.int64Type)
+    return chunk(ctx.consts, type, next, getmetatable, mathType, slow, compat.istype, compat.int64Type, rawequal)
 end
 
 function M.test(node, lim, dyn)

@@ -141,7 +141,7 @@ local bool          = User:is(input)          -- _test seul, aucune allocation
 | Frontière | Primitive |
 |---|---|
 | SQL | `z.null(cjson.null)` / `z.null(ngx.null)`, `z.int64()` (accepte string numérique avec `{ fromString = true }`), `:nullable()` distinct de `:optional()` |
-| FFI C / Rust / ASM / Lurlang | `z.cdata("struct foo*")` (`ffi.istype`), `z.notNullPtr()`, `z.int64()`, `z.u8()…z.i32()…z.u32()` (bornes vérifiées), `z.bytes():len(n)` |
+| FFI C / Rust / ASM / Lurlang | `z.cdata("struct foo*")` (`ffi.istype`), `z.notNullPtr("struct foo*")` (ctype obligatoire, pointeur non NULL), `z.int64()`, `z.u8()…z.i32()…z.u32()` (bornes vérifiées), `z.bytes():len(n)` |
 | Réseau | `z.bytes()` / `z.utf8()`, options globales `{ maxDepth, maxKeys, maxErrors, abortEarly }` |
 | Lua | `z.integer()` (via `math.type` en 5.3+, `v % 1 == 0` ailleurs), `z.array()` refuse les trous, `z.userdata(mt)`, `z.instanceOf(mt)` |
 
@@ -179,6 +179,8 @@ m.matcher()
 - cycles dans les données : protégés par `maxDepth`
 - `#s` compte des octets, pas des caractères : `utf8():min()` compte des caractères
 - noms de clés hostiles dans le codegen : `"]] os.exit() --"`, `"\0"`, très longues chaînes
+- NULL sous LuaJIT : un cdata pointeur NULL vérifie `== nil`. `:optional()` sur les autres types et les contrôles de trous des tableaux/tuples le traitent donc comme absent ; seuls `z.cdata` et `z.notNullPtr` (qui utilisent `rawequal`) le distinguent. Non corrigé, pour garder le chemin valide des schémas existants sans `rawequal` supplémentaire
+- registre des sentinelles NULL : il est global. Une sentinelle table/userdata/cdata posée par `z.config` ou `z.null(s)` / `:nullable(s)` est nommée « null » dans les messages et le `got` de tous les schémas ; ne pas prendre un objet partagé comme `io.stdout` pour sentinelle
 
 ---
 

@@ -1,6 +1,7 @@
 local errors = require("zigo.errors")
 local context = require("zigo.compile.context")
 local limitsLib = require("zigo.limits")
+local nulls = require("zigo.null")
 
 local M = {}
 
@@ -58,6 +59,7 @@ function M.new(kind, d)
         pure = pure,
         maxDepth = depth,
         isOptional = d.optional == true,
+        isNullable = d.nullable == true,
     }
     return self
 end
@@ -164,6 +166,12 @@ end
 
 function base.optional(self)
     return M.derive(self, { optional = true, nilKind = "optional", nilAt = chainLength(self.d) })
+end
+
+function base.nullable(self, s)
+    return M.derive(self, {
+        nullable = true, nullValue = nulls.resolve(s, "nullable"), nullAt = chainLength(self.d),
+    })
 end
 
 function base.default(self, x)

@@ -20,6 +20,7 @@
 
 ---@class zigo.ConfigOptions : zigo.LimitsOptions
 ---@field codegen? boolean
+---@field null? any default NULL sentinel for null() and nullable(), captured when the schema is built; never nil or NaN
 
 ---@class zigo.Config
 ---@field codegen boolean
@@ -27,6 +28,7 @@
 ---@field maxKeys integer
 ---@field maxErrors integer
 ---@field abortEarly boolean
+---@field null? any the default NULL sentinel, nil until z.config({ null = ... }) sets it
 
 ---@class zigo.Flattened
 ---@field formErrors string[]
@@ -62,6 +64,7 @@ function Context:addIssue(issue) end
 ---@field pure boolean
 ---@field maxDepth integer
 ---@field isOptional boolean
+---@field isNullable boolean
 ---@field _test fun(v: any): boolean
 ---@field _parse fun(v: any, ctx: zigo.Context, depth: integer): boolean, any
 ---@field _check fun(v: any, path: zigo.Path, depth: integer, errs: zigo.Issue[]|nil): zigo.Issue[]|nil
@@ -69,6 +72,10 @@ local Node = {}
 
 ---@return zigo.Node
 function Node:optional() end
+
+---@param sentinel? any accepted in addition to the schema, compared with rawequal and returned as-is by parse; defaults to z.config({ null = ... }), distinct from optional() which accepts nil
+---@return zigo.Node
+function Node:nullable(sentinel) end
 
 ---@param x any value returned as-is when the input is nil, or a function called each time
 ---@return zigo.Node
@@ -242,6 +249,29 @@ function zigo.utf8() end
 
 ---@return zigo.Node
 function zigo.boolean() end
+
+---@param sentinel? any accepted by rawequal only, defaults to z.config({ null = ... }); never nil or NaN
+---@return zigo.Node
+function zigo.null(sentinel) end
+
+---@return zigo.Node accepts any function
+function zigo.func() end
+
+---@param mt? table when given, the userdata must have exactly this metatable as returned by getmetatable (a __metatable field replaces it)
+---@return zigo.Node accepts userdata only (not LuaJIT cdata)
+function zigo.userdata(mt) end
+
+---@param mt table accepts tables and userdata whose getmetatable is exactly mt, with no walk along __index
+---@return zigo.Node
+function zigo.instanceOf(mt) end
+
+---@param ctype string|any C type checked with ffi.istype and resolved at the first call on LuaJIT; every value is refused with invalid_type elsewhere
+---@return zigo.Node
+function zigo.cdata(ctype) end
+
+---@param ctype string|any required pointer type checked with ffi.istype, resolved at the first call (it must be a pointer type); the value must not be NULL
+---@return zigo.Node refuses a NULL pointer; every value is refused with invalid_type outside LuaJIT
+function zigo.notNullPtr(ctype) end
 
 ---@param value string|number|boolean
 ---@return zigo.Node
