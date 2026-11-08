@@ -505,8 +505,120 @@ local function s9()
     }
 end
 
-M.s1, M.s2, M.s3, M.s4, M.s5, M.s6, M.s7, M.s9 = s1, s2, s3, s4, s5, s6, s7, s9
+local ffi
+if jit then
+    local okFfi, lib = pcall(require, "ffi")
+    if okFfi then ffi = lib end
+end
+local nativeInt = math.type ~= nil and math.maxinteger ~= nil and math.maxinteger > 2 ^ 53
+local SAFE = 2 ^ 53
 
-M.all = { s1, s2, s3, s4, s5, s6, s7, s9 }
+local function utf8Length(s)
+    if not s:find("[\128-\255]") then return #s end
+    local n, i, len = 0, 1, #s
+    local byte = string.byte
+    while i <= len do
+        local c = byte(s, i)
+        if c < 0x80 then
+            i = i + 1
+        elseif c < 0xC2 then
+            return nil
+        elseif c < 0xE0 then
+            local c2 = byte(s, i + 1)
+            if not c2 or c2 < 0x80 or c2 > 0xBF then return nil end
+            i = i + 2
+        elseif c < 0xF0 then
+            local c2, c3 = byte(s, i + 1, i + 2)
+            if not c3 or c2 < 0x80 or c2 > 0xBF or c3 < 0x80 or c3 > 0xBF then return nil end
+            if (c == 0xE0 and c2 < 0xA0) or (c == 0xED and c2 > 0x9F) then return nil end
+            i = i + 3
+        elseif c < 0xF5 then
+            local c2, c3, c4 = byte(s, i + 1, i + 3)
+            if not c4 or c2 < 0x80 or c2 > 0xBF or c3 < 0x80 or c3 > 0xBF or c4 < 0x80 or c4 > 0xBF then
+                return nil
+            end
+            if (c == 0xF0 and c2 < 0x90) or (c == 0xF4 and c2 > 0x8F) then return nil end
+            i = i + 4
+        else
+            return nil
+        end
+        n = n + 1
+    end
+    return n
+end
+
+local function int64Ok(id)
+    if type(id) == "number" then
+        if nativeInt and math.type(id) == "integer" then return true end
+        return id >= -SAFE and id <= SAFE and id % 1 == 0
+    end
+    return ffi ~= nil and ffi.istype("int64_t", id)
+end
+
+local function s10Name(i)
+    local k = i % 4
+    if k == 1 then return "h\195\169llo" .. i end
+    if k == 2 then return "\230\151\165\230\156\172" .. i end
+    return "user" .. i
+end
+
+local function s10Valid(i)
+    local id = 1099511627776 + i * 1234567
+    if ffi and i % 5 == 0 then id = ffi.new("int64_t", id) end
+    return { a = i % 256, b = (i * 65537) % 2000000 - 1000000, id = id, name = s10Name(i) }
+end
+
+local function s10With(key, value)
+    local v = s10Valid(3)
+    v[key] = value
+    return v
+end
+
+local function s10()
+    local inputs = {}
+    for i = 1, 64 do inputs[i] = s10Valid(i) end
+    local invalid = {
+        "x", 5, {},
+        s10With("a", 256), s10With("a", -1), s10With("a", 1.5), s10With("a", "1"), s10With("a", nil),
+        s10With("b", 2147483648), s10With("b", -2147483649), s10With("b", 0.5), s10With("b", 0 / 0),
+        s10With("id", 2 ^ 53 + 2), s10With("id", 1.5), s10With("id", "1"), s10With("id", nil),
+        s10With("name", ""), s10With("name", ("n"):rep(33)), s10With("name", "\192\128"),
+        s10With("name", "\237\160\128"), s10With("name", "\255"), s10With("name", 5),
+        s10With("name", ("\195\169"):rep(33)),
+    }
+    if ffi then
+        invalid[#invalid + 1] = s10With("id", ffi.new("uint64_t", 5))
+        invalid[#invalid + 1] = s10With("id", ffi.new("int32_t", 5))
+    end
+    return {
+        name = "S10 boundary object (u8, i32, int64, utf8)",
+        inputs = inputs,
+        invalid = invalid,
+        build = function(z)
+            return z.object({
+                a = z.u8(),
+                b = z.i32(),
+                id = z.int64(),
+                name = z.utf8():min(1):max(32),
+            })
+        end,
+        hand = function(v)
+            if type(v) ~= "table" then return false end
+            local a = v.a
+            if type(a) ~= "number" or a % 1 ~= 0 or a < 0 or a > 255 then return false end
+            local b = v.b
+            if type(b) ~= "number" or b % 1 ~= 0 or b < -2147483648 or b > 2147483647 then return false end
+            if not int64Ok(v.id) then return false end
+            local name = v.name
+            if type(name) ~= "string" then return false end
+            local n = utf8Length(name)
+            return n ~= nil and n >= 1 and n <= 32
+        end,
+    }
+end
+
+M.s1, M.s2, M.s3, M.s4, M.s5, M.s6, M.s7, M.s9, M.s10 = s1, s2, s3, s4, s5, s6, s7, s9, s10
+
+M.all = { s1, s2, s3, s4, s5, s6, s7, s9, s10 }
 
 return M

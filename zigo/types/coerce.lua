@@ -1,4 +1,6 @@
 local node = require("zigo.node")
+local fixed = require("zigo.types.fixed")
+local closures = require("zigo.compile.closures")
 
 local M = {}
 
@@ -11,6 +13,13 @@ function M.integer(opts)
         error("zigo: coerce.integer() expects an options table", 2)
     end
     return node.new("integer", { strict = opts ~= nil and opts.strict == true, coerce = true })
+end
+
+for _, spec in ipairs(closures.fixedInts) do
+    local name = spec[1]
+    M[name] = function(opts)
+        return fixed.make(name, opts, true)
+    end
 end
 
 function M.boolean()

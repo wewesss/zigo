@@ -5,6 +5,7 @@ local nodeLib = require("zigo.node")
 local mathType = compat.mathType
 local type, next, pcall, tostring = type, next, pcall, tostring
 local huge = math.huge
+local SAFE = 2 ^ 53
 local getmetatable = getmetatable
 local format, concat = string.format, table.concat
 
@@ -77,6 +78,44 @@ leaves.integer = function(ctx, d, v)
         conds = { "type(" .. v .. ") ~= \"number\"", v .. " % 1 ~= 0" }
     end
     bounds(ctx, v, d, conds)
+    return conds
+end
+
+for i = 1, #closures.fixedInts do
+    leaves[closures.fixedInts[i][1]] = function(ctx, d, v)
+        local lo, hi = closures.fixedBounds(d)
+        local conds
+        if d.strict then
+            conds = { "mathType(" .. v .. ") ~= \"integer\"" }
+        else
+            conds = { "type(" .. v .. ") ~= \"number\"", v .. " % 1 ~= 0" }
+        end
+        conds[#conds + 1] = v .. " < " .. const(ctx, lo)
+        conds[#conds + 1] = v .. " > " .. const(ctx, hi)
+        return conds
+    end
+end
+
+leaves.int64 = function(ctx, _, v)
+    local lo, hi = const(ctx, -SAFE), const(ctx, SAFE)
+    local reject = "type(" .. v .. ") ~= \"number\" or not (" .. v .. " >= " .. lo .. " and " .. v
+        .. " <= " .. hi .. " and " .. v .. " % 1 == 0)"
+    if compat.nativeInt64 then
+        return { "mathType(" .. v .. ") ~= \"integer\" and (" .. reject .. ")" }
+    end
+    if compat.ffi then
+        return { "(" .. reject .. ") and not istype(I64, " .. v .. ")" }
+    end
+    return { reject }
+end
+
+leaves.bytes = leaves.string
+
+leaves.utf8 = function(ctx, d, v)
+    local n = fresh(ctx, "u")
+    add(ctx, "local " .. n .. " = type(" .. v .. ") == \"string\" and " .. const(ctx, compat.utf8Length) .. "(" .. v .. ")")
+    local conds = { "not " .. n }
+    bounds(ctx, n, d, conds)
     return conds
 end
 
@@ -328,7 +367,7 @@ function build(node, lim, dyn)
         if not reference then reference = closures.test(node, lim, dyn) end
         return reference(root, D)
     end
-    local head = { "local KT, type, next, getmetatable, mathType, slow = ..." }
+    local head = { "local KT, type, next, getmetatable, mathType, slow, istype, I64 = ..." }
     local inline = ctx.nc < MAX_INLINE_CONSTS and ctx.nc or MAX_INLINE_CONSTS
     if inline > 0 then
         local names, values = {}, {}
@@ -347,7 +386,7 @@ function build(node, lim, dyn)
     local src = concat(head, "\n") .. "\n" .. body .. "\nreturn true\nend"
     local chunk = loader(src, "=zigo.codegen")
     if not chunk then return nil end
-    return chunk(ctx.consts, type, next, getmetatable, mathType, slow)
+    return chunk(ctx.consts, type, next, getmetatable, mathType, slow, compat.istype, compat.int64Type)
 end
 
 function M.test(node, lim, dyn)
