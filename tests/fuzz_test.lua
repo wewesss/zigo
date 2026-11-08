@@ -1568,7 +1568,12 @@ return function(env)
                     why = negative and "too_small" or "too_big"
                 end
                 if ok then
-                    local shown = tostring(value):gsub("LL$", "")
+                    local shown
+                    if type(value) == "number" and not (math.type and math.type(value) == "integer") then
+                        shown = ("%.0f"):format(value)
+                    else
+                        shown = tostring(value):gsub("LL$", "")
+                    end
                     if shown ~= text then
                         error(("fromString %q returned %s, expected %s"):format(s, shown, text), 0)
                     end
