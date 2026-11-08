@@ -29,6 +29,12 @@ build = {
     modules = {
         ["zigo"]             = "zigo/init.lua",
         ["zigo.util.compat"] = "zigo/util/compat.lua",
+        ["zigo.errors"]               = "zigo/errors.lua",
+        ["zigo.node"]                 = "zigo/node.lua",
+        ["zigo.compile.closures"]     = "zigo/compile/closures.lua",
+        ["zigo.types.primitives"]     = "zigo/types/primitives.lua",
+        ["zigo.types.array"]          = "zigo/types/array.lua",
+        ["zigo.types.object"]         = "zigo/types/object.lua",
     },
     copy_directories = { "docs", "types" },
 }

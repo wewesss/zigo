@@ -35,4 +35,6 @@ M.isArray = nativeTableType
         return pureIsArray(t)
     end
 
+M.rawlen = rawlen or function(t) return #t end
+
 return M

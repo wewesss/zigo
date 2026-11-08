@@ -5,6 +5,12 @@ local ENTRY = "zigo/init.lua"
 
 local MODULES = {
     { req = "zigo.util.compat", file = "zigo/util/compat.lua", var = "_M_compat" },
+    { req = "zigo.errors", file = "zigo/errors.lua", var = "_M_errors" },
+    { req = "zigo.node", file = "zigo/node.lua", var = "_M_node" },
+    { req = "zigo.compile.closures", file = "zigo/compile/closures.lua", var = "_M_closures" },
+    { req = "zigo.types.primitives", file = "zigo/types/primitives.lua", var = "_M_primitives" },
+    { req = "zigo.types.array", file = "zigo/types/array.lua", var = "_M_array" },
+    { req = "zigo.types.object", file = "zigo/types/object.lua", var = "_M_object" },
 }
 
 local reqToVar = {}
