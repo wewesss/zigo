@@ -202,6 +202,7 @@ return function(env)
                     valid = { a = valid }
                     invalid = { a = invalid }
                 end
+                schema = schema:limits({ maxDepth = 1000 })
                 assertTrue(schema:is(valid))
                 assertFalse(schema:is(invalid))
             end

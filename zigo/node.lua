@@ -1,5 +1,6 @@
 local errors = require("zigo.errors")
 local context = require("zigo.compile.context")
+local limitsLib = require("zigo.limits")
 
 local M = {}
 
@@ -19,6 +20,25 @@ end
 
 function M.isNode(x)
     return type(x) == "table" and metatables[getmetatable(x)] == true
+end
+
+function M.sub(child, key, lim)
+    if child.d.limits ~= nil then return child[key] end
+    if not lim.explicit and (key ~= "_parse" or (child.maxDepth > lim.maxDepth) == lim.tracked) then
+        return child[key]
+    end
+    local cache = lim.cache
+    if not cache then
+        cache = { _test = {}, _testD = {}, _check = {}, _parse = {} }
+        lim.cache = cache
+    end
+    local memo = cache[key]
+    local fn = memo[child]
+    if fn == nil then
+        fn = compilers[key](child, lim)
+        memo[child] = fn
+    end
+    return fn
 end
 
 local function chainLength(d)
@@ -49,8 +69,8 @@ function M.derive(source, changes)
     return M.new(source.kind, d)
 end
 
-local function diagnose(parse, v)
-    local ctx = context.collect({}, nil)
+local function diagnose(parse, v, cap)
+    local ctx = context.collect({ cap = cap }, nil)
     parse(v, ctx, 0)
     return ctx.issues or { { path = {}, code = "custom" } }
 end
@@ -59,14 +79,14 @@ local function impureSafeParse(self, v)
     local parse = self._parse
     local ok, out = parse(v, context.fast(), 0)
     if ok then return true, out end
-    return false, nil, errors.new(diagnose(parse, v))
+    return false, nil, errors.new(diagnose(parse, v, self._limits.cap))
 end
 
 local function impureParse(self, v)
     local parse = self._parse
     local ok, out = parse(v, context.fast(), 0)
     if ok then return out end
-    error(errors.new(diagnose(parse, v)), 2)
+    error(errors.new(diagnose(parse, v, self._limits.cap)), 2)
 end
 
 local function makeMeta(kind, methods)
@@ -198,14 +218,19 @@ function base.is(self, v)
     return self._test(v)
 end
 
+function base.limits(self, opts)
+    limitsLib.validate(opts, "limits")
+    return M.derive(self, { limits = limitsLib.merge(self.d.limits, opts) })
+end
+
 function base.safeParse(self, v)
     if self._test(v) then return true, v end
-    return false, nil, errors.new(self._check(v, {}, 0, nil))
+    return false, nil, errors.new(self._check(v, { cap = self._limits.cap }, 0, nil))
 end
 
 function base.parse(self, v)
     if self._test(v) then return v end
-    error(errors.new(self._check(v, {}, 0, nil)), 2)
+    error(errors.new(self._check(v, { cap = self._limits.cap }, 0, nil)), 2)
 end
 
 return M

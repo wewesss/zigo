@@ -10,6 +10,8 @@ local isSequence, holeFree = closures.isSequence, closures.holeFree
 local reportUnknownKeys, indexGet = closures.reportUnknownKeys, closures.indexGet
 local gotValue, copyList, keyRank = closures.gotValue, closures.copyList, closures.keyRank
 local collectKeys, reportExotic, emitUnion = closures.collectKeys, closures.reportExotic, closures.emitUnion
+local full = closures.full
+local sub = node.sub
 local type, next, rawget, tostring, tonumber = type, next, rawget, tostring, tonumber
 local find = string.find
 local huge = math.huge
@@ -24,9 +26,9 @@ local TWIN_DROP = {
     nilKind = true, nilAt = true, coerce = true, strip = true,
 }
 
-local function fail(ctx, depth, code, expected, got)
+local function fail(ctx, depth, code, expected, got, typ)
     if ctx.collect then
-        ctx.issues = emit(ctx.issues, ctx.path, depth, code, expected, got)
+        ctx.issues = emit(ctx.issues, ctx.path, depth, code, expected, got, typ)
     end
     return false
 end
@@ -61,14 +63,18 @@ coercers.string = function(v)
     return false
 end
 
-structural.object = function(self)
+structural.object = function(self, lim)
     local d = self.d
     local keys, children, known, strict, strip = d.keys, d.children, d.known, d.strict, d.strip
     local n = #keys
     local get = d.meta and indexGet or rawget
+    local maxDepth, maxKeys = lim.maxDepth, lim.maxKeys
     local kids = {}
-    for i = 1, n do kids[i] = children[i]._parse end
+    for i = 1, n do kids[i] = sub(children[i], "_parse", lim) end
     return function(v, ctx, depth)
+        if depth >= maxDepth then
+            return fail(ctx, depth, "too_deep", maxDepth)
+        end
         if type(v) ~= "table" then
             return fail(ctx, depth, "invalid_type", "object", describe(v))
         end
@@ -88,15 +94,26 @@ structural.object = function(self)
                 out[key] = cv
             elseif collect then
                 ok = false
+                if full(ctx.issues, path.cap) then return false end
             else
                 return false
             end
         end
         if strict then
+            local c = 0
             for k in next, v do
+                c = c + 1
+                if c > maxKeys then
+                    if collect then
+                        ctx.issues = emit(ctx.issues, path, depth, "too_many_keys", maxKeys)
+                        ok = false
+                        break
+                    end
+                    return false
+                end
                 if not known[k] then
                     if collect then
-                        ctx.issues = reportUnknownKeys(v, known, path, depth, ctx.issues)
+                        ctx.issues = reportUnknownKeys(v, known, path, depth, ctx.issues, maxKeys)
                         ok = false
                         break
                     end
@@ -109,21 +126,27 @@ structural.object = function(self)
     end
 end
 
-structural.array = function(self)
+structural.array = function(self, lim)
     local d = self.d
     local min, max, len, meta = d.min, d.max, d.len, d.meta
-    local item = d.item._parse
+    local maxDepth, maxKeys = lim.maxDepth, lim.maxKeys
+    local item = sub(d.item, "_parse", lim)
     local get = meta and indexGet or rawget
     return function(v, ctx, depth)
+        if depth >= maxDepth then
+            return fail(ctx, depth, "too_deep", maxDepth)
+        end
         if type(v) ~= "table" then
             return fail(ctx, depth, "invalid_type", "array", describe(v))
         end
         local n, sequence
+        if meta then n = #v else n = rawlen(v) end
+        if n > maxKeys then
+            return fail(ctx, depth, "too_many_keys", maxKeys, n, "array")
+        end
         if meta then
-            n = #v
             sequence = holeFree(v, n)
         else
-            n = rawlen(v)
             sequence = isSequence(v, n)
         end
         if not sequence then
@@ -146,6 +169,7 @@ structural.array = function(self)
                 out[i] = cv
             elseif collect then
                 ok = false
+                if full(ctx.issues, path.cap) then return false end
             else
                 return false
             end
@@ -155,11 +179,11 @@ structural.array = function(self)
     end
 end
 
-structural.union = function(self)
+structural.union = function(self, lim)
     local variants = self.d.variants
     local n = #variants
     local kids = {}
-    for i = 1, n do kids[i] = variants[i]._parse end
+    for i = 1, n do kids[i] = sub(variants[i], "_parse", lim) end
     return function(v, ctx, depth)
         if not ctx.collect then
             for i = 1, n do
@@ -169,6 +193,19 @@ structural.union = function(self)
             return false
         end
         local saved = ctx.issues
+        if ctx.path.cap == 1 then
+            ctx.collect = false
+            for i = 1, n do
+                local ok, out = kids[i](v, ctx, depth)
+                if ok then
+                    ctx.collect = true
+                    return true, out
+                end
+            end
+            ctx.collect = true
+            ctx.issues = emitUnion(saved, ctx.path, depth, nil)
+            return false
+        end
         local lists = {}
         for i = 1, n do
             ctx.issues = nil
@@ -184,12 +221,12 @@ structural.union = function(self)
     end
 end
 
-structural.discriminatedUnion = function(self)
+structural.discriminatedUnion = function(self, lim)
     local d = self.d
     local key, values, variants = d.key, d.values, d.variants
     local get = d.meta and indexGet or rawget
     local map = {}
-    for i = 1, #values do map[values[i]] = variants[i]._parse end
+    for i = 1, #values do map[values[i]] = sub(variants[i], "_parse", lim) end
     return function(v, ctx, depth)
         if type(v) ~= "table" then
             return fail(ctx, depth, "invalid_type", "object", describe(v))
@@ -208,24 +245,30 @@ structural.discriminatedUnion = function(self)
     end
 end
 
-structural.tuple = function(self)
+structural.tuple = function(self, lim)
     local d = self.d
     local items, meta = d.items, d.meta
     local count = #items
+    local maxDepth, maxKeys = lim.maxDepth, lim.maxKeys
     local kids = {}
-    for i = 1, count do kids[i] = items[i]._parse end
-    local rest = d.rest and d.rest._parse
+    for i = 1, count do kids[i] = sub(items[i], "_parse", lim) end
+    local rest = d.rest and sub(d.rest, "_parse", lim)
     local get = meta and indexGet or rawget
     return function(v, ctx, depth)
+        if depth >= maxDepth then
+            return fail(ctx, depth, "too_deep", maxDepth)
+        end
         if type(v) ~= "table" then
             return fail(ctx, depth, "invalid_type", "tuple", describe(v))
         end
         local n, sequence
+        if meta then n = #v else n = rawlen(v) end
+        if n > maxKeys then
+            return fail(ctx, depth, "too_many_keys", maxKeys, n, "array")
+        end
         if meta then
-            n = #v
             sequence = holeFree(v, n)
         else
-            n = rawlen(v)
             sequence = isSequence(v, n)
         end
         if not sequence then
@@ -248,6 +291,7 @@ structural.tuple = function(self)
                 out[i] = cv
             elseif collect then
                 ok = false
+                if full(ctx.issues, path.cap) then return false end
             else
                 return false
             end
@@ -260,6 +304,7 @@ structural.tuple = function(self)
                     out[i] = cv
                 elseif collect then
                     ok = false
+                    if full(ctx.issues, path.cap) then return false end
                 else
                     return false
                 end
@@ -270,19 +315,26 @@ structural.tuple = function(self)
     end
 end
 
-structural.record = function(self)
+structural.record = function(self, lim)
     local d = self.d
-    local keyTest, keyCheck = d.key._test, d.key._check
-    local value = d.value._parse
+    local maxDepth, maxKeys = lim.maxDepth, lim.maxKeys
+    local testKey = lim.tracked and "_testD" or "_test"
+    local keyTest, keyCheck = sub(d.key, testKey, lim), sub(d.key, "_check", lim)
+    local value = sub(d.value, "_parse", lim)
     return function(v, ctx, depth)
+        if depth >= maxDepth then
+            return fail(ctx, depth, "too_deep", maxDepth)
+        end
         if type(v) ~= "table" then
             return fail(ctx, depth, "invalid_type", "record", describe(v))
         end
         local out = {}
         local nd = depth + 1
         if not ctx.collect then
+            local c = 0
             for k, x in next, v do
-                if not keyRank[type(k)] or not keyTest(k) then return false end
+                c = c + 1
+                if c > maxKeys or not keyRank[type(k)] or not keyTest(k, nd) then return false end
                 local ok, cv = value(x, ctx, nd)
                 if not ok then return false end
                 out[k] = cv
@@ -290,12 +342,16 @@ structural.record = function(self)
             return true, out
         end
         local path = ctx.path
-        local list, n, exotic = collectKeys(v)
+        local list, n, exotic, over = collectKeys(v, maxKeys)
+        if over then
+            ctx.issues = emit(ctx.issues, path, depth, "too_many_keys", maxKeys)
+            return false
+        end
         local ok = true
         for i = 1, n do
             local k = list[i]
             path[nd] = k
-            if not keyTest(k) then
+            if not keyTest(k, nd) then
                 ctx.issues = keyCheck(k, path, nd, ctx.issues)
                 ok = false
             end
@@ -305,6 +361,7 @@ structural.record = function(self)
             else
                 ok = false
             end
+            if full(ctx.issues, path.cap) then return false end
         end
         if exotic then
             ctx.issues = reportExotic(exotic, path, depth, ctx.issues)
@@ -358,13 +415,14 @@ local function twinOf(self)
     return node.new(self.kind, d)
 end
 
-local function buildBase(self)
+local function buildBase(self, lim)
     local build = structural[self.kind]
-    if build and needsStructure(self) then return build(self) end
+    if build and needsStructure(self) then return build(self, lim) end
     local twin = twinOf(self)
-    local test, check = twin._test, twin._check
+    local test = sub(twin, lim.tracked and "_testD" or "_test", lim)
+    local check = sub(twin, "_check", lim)
     local inner = function(v, ctx, depth)
-        if test(v) then return true, v end
+        if test(v, depth) then return true, v end
         if ctx.collect then ctx.issues = check(v, ctx.path, depth, ctx.issues) end
         return false
     end
@@ -380,9 +438,9 @@ local function buildBase(self)
     end
 end
 
-local function buildStep(step)
+local function buildStep(step, lim)
     local op = step.op
-    if op == "pipe" then return step.schema._parse end
+    if op == "pipe" then return sub(step.schema, "_parse", lim) end
     local fn = step.fn
     if op == "transform" then
         return function(x, ctx, depth)
@@ -407,21 +465,23 @@ local function buildStep(step)
     end
 end
 
-function M.build(self)
+function M.build(self, lim)
+    lim = lim or self._limits
     if self.pure then
-        local test, check = self._test, self._check
+        local test = sub(self, lim.tracked and "_testD" or "_test", lim)
+        local check = sub(self, "_check", lim)
         return function(v, ctx, depth)
-            if test(v) then return true, v end
+            if test(v, depth) then return true, v end
             if ctx.collect then ctx.issues = check(v, ctx.path, depth, ctx.issues) end
             return false
         end
     end
     local d = self.d
-    local base = buildBase(self)
+    local base = buildBase(self, lim)
     local chain = d.chain
     local count = chain and #chain or 0
     local steps = {}
-    for i = 1, count do steps[i] = buildStep(chain[i]) end
+    for i = 1, count do steps[i] = buildStep(chain[i], lim) end
     local nilKind, nilAt, default = d.nilKind, d.nilAt, d.default
     local defaultIsFunction = type(default) == "function"
     return function(v, ctx, depth)
@@ -444,16 +504,16 @@ function M.build(self)
     end
 end
 
-function M.test(self)
-    local parse = self._parse
+function M.test(self, lim)
+    local parse = sub(self, "_parse", lim or self._limits)
     local fast = context.fast
     return function(v)
         return (parse(v, fast(), 0))
     end
 end
 
-function M.check(self)
-    local parse = self._parse
+function M.check(self, lim)
+    local parse = sub(self, "_parse", lim or self._limits)
     local collect = context.collect
     return function(v, path, depth, errs)
         local ctx = collect(path, errs)

@@ -273,8 +273,240 @@ local function s5()
     }
 end
 
-M.s1, M.s2, M.s3, M.s4, M.s5 = s1, s2, s3, s4, s5
+local function s6Valid(i)
+    local role = roles[i % 3 + 1]
+    return {
+        f01 = 1 + i % 500, f02 = ("n"):rep(1 + i % 31), f03 = role, f04 = i % 2 == 0,
+        f05 = (i % 97) + 0.5, f06 = i % 151, f07 = ("%05d"):format(i * 7 % 100000),
+        f08 = ("x"):rep(3 + i % 9), f09 = i % 1000, f10 = i % 3 == 0,
+        f11 = ("y"):rep(1 + i % 5), f12 = i * 1.25,
+    }
+end
 
-M.all = { s1, s2, s3, s4, s5 }
+local function s6With(i, key, value)
+    local v = s6Valid(i)
+    v[key] = value
+    return v
+end
+
+local function parseOk(schema)
+    return function(v) return (schema:safeParse(v)) end
+end
+
+local function s6()
+    local valid, early, late = {}, {}, {}
+    for i = 1, 64 do
+        valid[i] = s6Valid(i)
+        early[i] = s6With(i, "f01", i % 2 == 0 and "x" or 0)
+        late[i] = s6With(i, "f12", i % 2 == 0 and "x" or 0 / 0)
+    end
+    local function build(z)
+        return z.object({
+            f01 = z.integer():min(1),
+            f02 = z.string():min(1):max(32),
+            f03 = z.enum({ "admin", "user", "guest" }),
+            f04 = z.boolean(),
+            f05 = z.number():min(0),
+            f06 = z.integer():between(0, 150),
+            f07 = z.string():len(5),
+            f08 = z.string():min(3),
+            f09 = z.integer():min(0),
+            f10 = z.boolean(),
+            f11 = z.string():min(1),
+            f12 = z.number(),
+        })
+    end
+    return {
+        name = "S6 invalid early or late (12 fields)",
+        inputs = valid,
+        invalid = { 5, {}, s6With(1, "f07", "1234"), s6With(1, "f03", "root") },
+        sets = {
+            { label = "valid inputs", inputs = valid, key = "valid" },
+            { label = "invalid at the first field", inputs = early, key = "early" },
+            { label = "invalid at the last field", inputs = late, key = "late" },
+        },
+        build = build,
+        extras = function(z, key)
+            return {
+                { name = "zigo safeParse", fn = parseOk(build(z)), key = key .. ".parse" },
+                {
+                    name = "zigo safeParse, abortEarly",
+                    fn = parseOk(build(z):limits({ abortEarly = true })),
+                    key = key .. ".abort",
+                },
+            }
+        end,
+        hand = function(v)
+            if type(v) ~= "table" then return false end
+            local x = v.f01
+            if type(x) ~= "number" or x % 1 ~= 0 or x < 1 then return false end
+            local s = v.f02
+            if type(s) ~= "string" or #s < 1 or #s > 32 then return false end
+            local r = v.f03
+            if r ~= "admin" and r ~= "user" and r ~= "guest" then return false end
+            if type(v.f04) ~= "boolean" then return false end
+            x = v.f05
+            if type(x) ~= "number" or x ~= x or x < 0 then return false end
+            x = v.f06
+            if type(x) ~= "number" or x % 1 ~= 0 or x < 0 or x > 150 then return false end
+            s = v.f07
+            if type(s) ~= "string" or #s ~= 5 then return false end
+            s = v.f08
+            if type(s) ~= "string" or #s < 3 then return false end
+            x = v.f09
+            if type(x) ~= "number" or x % 1 ~= 0 or x < 0 then return false end
+            if type(v.f10) ~= "boolean" then return false end
+            s = v.f11
+            if type(s) ~= "string" or #s < 1 then return false end
+            x = v.f12
+            if type(x) ~= "number" or x ~= x then return false end
+            return true
+        end,
+    }
+end
+
+local PAYLOAD_ROWS = 10000
+
+local function s7Rows(count, bad, seed)
+    local list = {}
+    for i = 1, count do
+        if bad then
+            list[i] = { id = (i + seed) % 2 == 0 and 0 or "x", name = ("u"):rep(1 + (i + seed) % 9) }
+        else
+            list[i] = { id = i + seed, name = ("u"):rep(1 + (i + seed) % 9) }
+        end
+    end
+    return list
+end
+
+local function s7()
+    local payloads = {}
+    for i = 1, 4 do payloads[i] = s7Rows(PAYLOAD_ROWS, true, i) end
+    local function build(z)
+        return z.array(z.object({ id = z.integer():min(1), name = z.string():min(1) }))
+    end
+    return {
+        name = "S7 adversarial payload (10 000 potential errors)",
+        inputs = payloads,
+        invalid = {
+            s7Rows(PAYLOAD_ROWS, false, 9),
+            s7Rows(PAYLOAD_ROWS + 1, false, 9),
+            "x",
+            {},
+        },
+        sets = { { label = "invalid inputs", inputs = payloads, key = "invalid" } },
+        build = build,
+        extras = function(z, key)
+            return {
+                {
+                    name = "zigo safeParse, maxErrors = inf (10 000 issues)",
+                    fn = parseOk(build(z):limits({ maxErrors = math.huge })),
+                    key = key .. ".unbounded",
+                },
+                { name = "zigo safeParse, default maxErrors (100)", fn = parseOk(build(z)), key = key .. ".capped" },
+                {
+                    name = "zigo safeParse, abortEarly",
+                    fn = parseOk(build(z):limits({ abortEarly = true })),
+                    key = key .. ".abort",
+                },
+            }
+        end,
+        hand = function(v)
+            if type(v) ~= "table" then return false end
+            local n = #v
+            if n > PAYLOAD_ROWS then return false end
+            local count = 0
+            for _ in next, v do
+                count = count + 1
+                if count > n then return false end
+            end
+            if count ~= n then return false end
+            for i = 1, n do
+                local row = v[i]
+                if type(row) ~= "table" then return false end
+                local id = row.id
+                if type(id) ~= "number" or id % 1 ~= 0 or id < 1 then return false end
+                local name = row.name
+                if type(name) ~= "string" or #name < 1 then return false end
+            end
+            return true
+        end,
+    }
+end
+
+local SCHEMAS = 200
+local USED = 10
+
+local function s9Schema(z, i)
+    return z.object({
+        id = z.integer():min(i),
+        name = z.string():min(1):max(8 + i % 24),
+        role = z.enum({ "admin", "user", "guest", "r" .. i }),
+        tags = z.array(z.string():max(4 + i % 12)):max(3 + i % 7),
+        address = z.object({ city = z.string():min(1 + i % 3), zip = z.string():len(5) }),
+        active = z.boolean(),
+    })
+end
+
+local function s9()
+    local sample = {
+        id = 100000, name = "alice", role = "admin", tags = { "a", "b" },
+        address = { city = "Paris", zip = "75001" }, active = true,
+    }
+    local function buildAll(z)
+        local list = {}
+        for i = 1, SCHEMAS do list[i] = s9Schema(z, i) end
+        return list
+    end
+    local function useSome(list)
+        local hits = 0
+        for i = 1, USED do
+            if list[i]:is(sample) then hits = hits + 1 end
+        end
+        return hits
+    end
+    return {
+        name = "S9 200 schemas defined, 10 used",
+        register = function(z, b)
+            assert(useSome(buildAll(z)) == USED, "S9: the sample must satisfy the first schemas")
+            local function withCodegen(flag, fn)
+                local previous = z.config().codegen
+                z.config({ codegen = flag })
+                local ok, out = pcall(fn)
+                z.config({ codegen = previous })
+                if not ok then error(out, 0) end
+                return out
+            end
+            b.scenario("S9 200 schemas defined, 10 used - cold start", {
+                { name = "define 200 (no compilation)", fn = function() return #buildAll(z) end, key = "s9.define" },
+                {
+                    name = "define 200, validate with 10 (compiled on first use)",
+                    fn = function() return useSome(buildAll(z)) end,
+                    key = "s9.lazy",
+                },
+                {
+                    name = "define 200, compile all 200, validate with 10",
+                    fn = function()
+                        local all = buildAll(z)
+                        for i = 1, #all do local _ = all[i]._test end
+                        return useSome(all)
+                    end,
+                    key = "s9.eager",
+                },
+                {
+                    name = "define 200, validate with 10 (closures)",
+                    fn = function()
+                        return withCodegen(false, function() return useSome(buildAll(z)) end)
+                    end,
+                    key = "s9.closures",
+                },
+            })
+        end,
+    }
+end
+
+M.s1, M.s2, M.s3, M.s4, M.s5, M.s6, M.s7, M.s9 = s1, s2, s3, s4, s5, s6, s7, s9
+
+M.all = { s1, s2, s3, s4, s5, s6, s7, s9 }
 
 return M

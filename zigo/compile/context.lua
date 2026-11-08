@@ -22,12 +22,14 @@ function methods.addIssue(self, t)
     self.count = self.count + 1
     if not self.collect then return end
     local path, depth = self.path, self.depth
+    local issues = self.issues
+    local cap = path.cap
+    if cap and issues and #issues >= cap then return end
     local p = {}
     for i = 1, depth do p[i] = path[i] end
     if extra then
         for i = 1, #extra do p[depth + i] = extra[i] end
     end
-    local issues = self.issues
     if not issues then
         issues = {}
         self.issues = issues

@@ -1,10 +1,12 @@
 local compat = require("zigo.util.compat")
+local nodeLib = require("zigo.node")
 
 local mathType = compat.mathType
 local rawlen = compat.rawlen
 local huge = math.huge
 local type, next, rawget = type, next, rawget
 local sort = table.sort
+local sub = nodeLib.sub
 
 local M = {}
 
@@ -32,6 +34,8 @@ local function gotValue(v)
 end
 
 local function emit(errs, path, depth, code, expected, got, typ, exact)
+    local cap = path.cap
+    if cap and errs and #errs >= cap then return errs end
     local p = {}
     for i = 1, depth do p[i] = path[i] end
     local issue = { path = p, code = code, expected = expected, got = got, type = typ, exact = exact }
@@ -40,6 +44,10 @@ local function emit(errs, path, depth, code, expected, got, typ, exact)
         return errs
     end
     return { issue }
+end
+
+local function full(errs, cap)
+    return cap ~= nil and errs ~= nil and #errs >= cap
 end
 
 local function inBounds(x, min, max, len)
@@ -79,6 +87,26 @@ local function isSequence(v, n)
     return count == n
 end
 
+local function arrayMax(d, maxKeys)
+    local max = d.max
+    if maxKeys == huge then return max end
+    if max == nil or max > maxKeys then
+        if d.len ~= nil and d.len <= maxKeys then return max end
+        return maxKeys
+    end
+    return max
+end
+
+local function tupleMax(d, maxKeys)
+    if d.rest then
+        if maxKeys == huge then return nil end
+        return maxKeys
+    end
+    local count = #d.items
+    if count < maxKeys then return count end
+    return maxKeys
+end
+
 local keyRank = { number = 1, string = 2, boolean = 3 }
 local exoticTypes = { "function", "table", "thread", "userdata", "cdata" }
 
@@ -89,9 +117,13 @@ local function keyLess(a, b)
     return a < b
 end
 
-local function reportUnknownKeys(v, known, path, depth, errs)
-    local list, n, exotic = nil, 0, nil
+local function reportUnknownKeys(v, known, path, depth, errs, maxKeys)
+    local list, n, exotic, total = nil, 0, nil, 0
     for k in next, v do
+        total = total + 1
+        if total > maxKeys then
+            return emit(errs, path, depth, "too_many_keys", maxKeys)
+        end
         if not known[k] then
             if keyRank[type(k)] then
                 if not list then list = {} end
@@ -122,9 +154,11 @@ local function reportUnknownKeys(v, known, path, depth, errs)
     return errs
 end
 
-local function collectKeys(v)
-    local list, n, exotic = nil, 0, nil
+local function collectKeys(v, maxKeys)
+    local list, n, exotic, total = nil, 0, nil, 0
     for k in next, v do
+        total = total + 1
+        if total > maxKeys then return nil, 0, nil, true end
         if keyRank[type(k)] then
             if not list then list = {} end
             n = n + 1
@@ -135,7 +169,7 @@ local function collectKeys(v)
         end
     end
     if list then sort(list, keyLess) end
-    return list, n, exotic
+    return list, n, exotic, false
 end
 
 local function reportExotic(exotic, path, depth, errs)
@@ -149,6 +183,8 @@ local function reportExotic(exotic, path, depth, errs)
 end
 
 local function emitUnion(errs, path, depth, lists)
+    local cap = path.cap
+    if cap and errs and #errs >= cap then return errs end
     local p = {}
     for i = 1, depth do p[i] = path[i] end
     local issue = { path = p, code = "invalid_union", unionErrors = lists }
@@ -157,6 +193,30 @@ local function emitUnion(errs, path, depth, lists)
         return errs
     end
     return { issue }
+end
+
+local function strictCounted(v, known, maxKeys)
+    local c = 0
+    for k in next, v do
+        c = c + 1
+        if c > maxKeys or not known[k] then return false end
+    end
+    return true
+end
+
+local function resolveTarget(d)
+    local target = d.target
+    if target == nil then
+        target = d.fn()
+        if not nodeLib.isNode(target) then
+            error("zigo: lazy() function must return a schema", 0)
+        end
+        if not target.pure then
+            error("zigo: lazy() target must be a pure schema", 0)
+        end
+        d.target = target
+    end
+    return target
 end
 
 testBuilders.string = function(d)
@@ -285,43 +345,99 @@ checkBuilders.never = function()
     end
 end
 
-testBuilders.object = function(d)
+testBuilders.lazy = function(d, lim, dyn)
+    local key = dyn and "_testD" or "_test"
+    local fn
+    if dyn then
+        return function(v, D)
+            if not fn then fn = sub(resolveTarget(d), key, lim) end
+            return fn(v, D)
+        end
+    end
+    return function(v)
+        if not fn then fn = sub(resolveTarget(d), key, lim) end
+        return fn(v)
+    end
+end
+
+checkBuilders.lazy = function(d, lim)
+    local fn
+    return function(v, path, depth, errs)
+        if not fn then fn = sub(resolveTarget(d), "_check", lim) end
+        return fn(v, path, depth, errs)
+    end
+end
+
+testBuilders.object = function(d, lim, dyn)
     local keys, children, known, strict = d.keys, d.children, d.known, d.strict
     local n = #keys
     local get = d.meta and indexGet or rawget
+    local maxDepth, maxKeys = lim.maxDepth, lim.maxKeys
+    local counted = n > maxKeys
+    local childKey = dyn and "_testD" or "_test"
     local tests = {}
-    for i = 1, n do tests[i] = children[i]._test end
+    for i = 1, n do tests[i] = sub(children[i], childKey, lim) end
+    if dyn then
+        return function(v, D)
+            D = D or 0
+            if D >= maxDepth or type(v) ~= "table" then return false end
+            local nd = D + 1
+            for i = 1, n do
+                if not tests[i](get(v, keys[i]), nd) then return false end
+            end
+            if strict then
+                if counted then
+                    if not strictCounted(v, known, maxKeys) then return false end
+                else
+                    for k in next, v do
+                        if not known[k] then return false end
+                    end
+                end
+            end
+            return true
+        end
+    end
     return function(v)
         if type(v) ~= "table" then return false end
         for i = 1, n do
             if not tests[i](get(v, keys[i])) then return false end
         end
         if strict then
-            for k in next, v do
-                if not known[k] then return false end
+            if counted then
+                if not strictCounted(v, known, maxKeys) then return false end
+            else
+                for k in next, v do
+                    if not known[k] then return false end
+                end
             end
         end
         return true
     end
 end
 
-checkBuilders.object = function(d)
+checkBuilders.object = function(d, lim)
     local keys, children, known, strict = d.keys, d.children, d.known, d.strict
     local n = #keys
     local get = d.meta and indexGet or rawget
+    local maxDepth, maxKeys = lim.maxDepth, lim.maxKeys
     local checks = {}
-    for i = 1, n do checks[i] = children[i]._check end
+    for i = 1, n do checks[i] = sub(children[i], "_check", lim) end
     return function(v, path, depth, errs)
+        if depth >= maxDepth then
+            return emit(errs, path, depth, "too_deep", maxDepth)
+        end
         if type(v) ~= "table" then
             return emit(errs, path, depth, "invalid_type", "object", describe(v))
         end
+        local cap = path.cap
         local nd = depth + 1
         for i = 1, n do
             local key = keys[i]
             path[nd] = key
             errs = checks[i](get(v, key), path, nd, errs)
+            if full(errs, cap) then return errs end
         end
-        if strict then errs = reportUnknownKeys(v, known, path, depth, errs) end
+        if strict then errs = reportUnknownKeys(v, known, path, depth, errs, maxKeys) end
         return errs
     end
 end
@@ -333,20 +449,46 @@ local function holeFree(v, n)
     return true
 end
 
-testBuilders.array = function(d)
-    local min, max, len, meta = d.min, d.max, d.len, d.meta
-    local itemTest = d.item._test
+testBuilders.array = function(d, lim, dyn)
+    local min, len, meta = d.min, d.len, d.meta
+    local max = arrayMax(d, lim.maxKeys)
+    local maxDepth = lim.maxDepth
+    local itemTest = sub(d.item, dyn and "_testD" or "_test", lim)
+    if dyn then
+        return function(v, D)
+            D = D or 0
+            if D >= maxDepth or type(v) ~= "table" then return false end
+            local n
+            if meta then n = #v else n = rawlen(v) end
+            if not inBounds(n, min, max, len) then return false end
+            if meta then
+                if not holeFree(v, n) then return false end
+            elseif not isSequence(v, n) then
+                return false
+            end
+            local nd = D + 1
+            if meta then
+                for i = 1, n do
+                    if not itemTest(v[i], nd) then return false end
+                end
+            else
+                for i = 1, n do
+                    if not itemTest(rawget(v, i), nd) then return false end
+                end
+            end
+            return true
+        end
+    end
     return function(v)
         if type(v) ~= "table" then return false end
         local n
-        if meta then
-            n = #v
-            if not holeFree(v, n) then return false end
-        else
-            n = rawlen(v)
-            if not isSequence(v, n) then return false end
-        end
+        if meta then n = #v else n = rawlen(v) end
         if not inBounds(n, min, max, len) then return false end
+        if meta then
+            if not holeFree(v, n) then return false end
+        elseif not isSequence(v, n) then
+            return false
+        end
         if meta then
             for i = 1, n do
                 if not itemTest(v[i]) then return false end
@@ -360,28 +502,33 @@ testBuilders.array = function(d)
     end
 end
 
-checkBuilders.array = function(d)
+checkBuilders.array = function(d, lim)
     local min, max, len, meta = d.min, d.max, d.len, d.meta
-    local itemCheck = d.item._check
+    local maxDepth, maxKeys = lim.maxDepth, lim.maxKeys
+    local itemCheck = sub(d.item, "_check", lim)
     local get = meta and indexGet or rawget
     return function(v, path, depth, errs)
+        if depth >= maxDepth then
+            return emit(errs, path, depth, "too_deep", maxDepth)
+        end
         if type(v) ~= "table" then
             return emit(errs, path, depth, "invalid_type", "array", describe(v))
         end
-        local n, ok
-        if meta then
-            n = #v
-            ok = holeFree(v, n)
-        else
-            n = rawlen(v)
-            ok = isSequence(v, n)
+        local n
+        if meta then n = #v else n = rawlen(v) end
+        if n > maxKeys then
+            return emit(errs, path, depth, "too_many_keys", maxKeys, n, "array")
         end
+        local ok
+        if meta then ok = holeFree(v, n) else ok = isSequence(v, n) end
         if not ok then
             return emit(errs, path, depth, "invalid_array", "sequence", "table")
         end
         errs = checkBounds(n, min, max, len, "array", errs, path, depth)
+        local cap = path.cap
         local nd = depth + 1
         for i = 1, n do
+            if full(errs, cap) then return errs end
             path[nd] = i
             errs = itemCheck(get(v, i), path, nd, errs)
         end
@@ -389,11 +536,21 @@ checkBuilders.array = function(d)
     end
 end
 
-testBuilders.union = function(d)
+testBuilders.union = function(d, lim, dyn)
     local variants = d.variants
     local n = #variants
+    local childKey = dyn and "_testD" or "_test"
     local tests = {}
-    for i = 1, n do tests[i] = variants[i]._test end
+    for i = 1, n do tests[i] = sub(variants[i], childKey, lim) end
+    if dyn then
+        return function(v, D)
+            D = D or 0
+            for i = 1, n do
+                if tests[i](v, D) then return true end
+            end
+            return false
+        end
+    end
     return function(v)
         for i = 1, n do
             if tests[i](v) then return true end
@@ -402,18 +559,20 @@ testBuilders.union = function(d)
     end
 end
 
-checkBuilders.union = function(d)
+checkBuilders.union = function(d, lim)
     local variants = d.variants
     local n = #variants
+    local testKey = lim.tracked and "_testD" or "_test"
     local tests, checks = {}, {}
     for i = 1, n do
-        tests[i] = variants[i]._test
-        checks[i] = variants[i]._check
+        tests[i] = sub(variants[i], testKey, lim)
+        checks[i] = sub(variants[i], "_check", lim)
     end
     return function(v, path, depth, errs)
         for i = 1, n do
-            if tests[i](v) then return errs end
+            if tests[i](v, depth) then return errs end
         end
+        if path.cap == 1 then return emitUnion(errs, path, depth, nil) end
         local lists = {}
         for i = 1, n do
             lists[i] = checks[i](v, path, depth, nil) or {}
@@ -422,11 +581,20 @@ checkBuilders.union = function(d)
     end
 end
 
-testBuilders.discriminatedUnion = function(d)
+testBuilders.discriminatedUnion = function(d, lim, dyn)
     local key, values, variants = d.key, d.values, d.variants
     local get = d.meta and indexGet or rawget
+    local childKey = dyn and "_testD" or "_test"
     local map = {}
-    for i = 1, #values do map[values[i]] = variants[i]._test end
+    for i = 1, #values do map[values[i]] = sub(variants[i], childKey, lim) end
+    if dyn then
+        return function(v, D)
+            if type(v) ~= "table" then return false end
+            local test = map[get(v, key)]
+            if test == nil then return false end
+            return test(v, D or 0)
+        end
+    end
     return function(v)
         if type(v) ~= "table" then return false end
         local test = map[get(v, key)]
@@ -435,11 +603,11 @@ testBuilders.discriminatedUnion = function(d)
     end
 end
 
-checkBuilders.discriminatedUnion = function(d)
+checkBuilders.discriminatedUnion = function(d, lim)
     local key, values, variants = d.key, d.values, d.variants
     local get = d.meta and indexGet or rawget
     local map = {}
-    for i = 1, #values do map[values[i]] = variants[i]._check end
+    for i = 1, #values do map[values[i]] = sub(variants[i], "_check", lim) end
     return function(v, path, depth, errs)
         if type(v) ~= "table" then
             return emit(errs, path, depth, "invalid_type", "object", describe(v))
@@ -455,24 +623,50 @@ checkBuilders.discriminatedUnion = function(d)
     end
 end
 
-testBuilders.tuple = function(d)
+testBuilders.tuple = function(d, lim, dyn)
     local items, rest, meta = d.items, d.rest, d.meta
     local count = #items
+    local limitN = tupleMax(d, lim.maxKeys)
+    local maxDepth = lim.maxDepth
+    local childKey = dyn and "_testD" or "_test"
     local tests = {}
-    for i = 1, count do tests[i] = items[i]._test end
-    local restTest = rest and rest._test
+    for i = 1, count do tests[i] = sub(items[i], childKey, lim) end
+    local restTest = rest and sub(rest, childKey, lim)
     local get = meta and indexGet or rawget
+    if dyn then
+        return function(v, D)
+            D = D or 0
+            if D >= maxDepth or type(v) ~= "table" then return false end
+            local n
+            if meta then n = #v else n = rawlen(v) end
+            if limitN and n > limitN then return false end
+            if meta then
+                if not holeFree(v, n) then return false end
+            elseif not isSequence(v, n) then
+                return false
+            end
+            local nd = D + 1
+            for i = 1, count do
+                if not tests[i](get(v, i), nd) then return false end
+            end
+            if restTest then
+                for i = count + 1, n do
+                    if not restTest(get(v, i), nd) then return false end
+                end
+            end
+            return true
+        end
+    end
     return function(v)
         if type(v) ~= "table" then return false end
         local n
+        if meta then n = #v else n = rawlen(v) end
+        if limitN and n > limitN then return false end
         if meta then
-            n = #v
             if not holeFree(v, n) then return false end
-        else
-            n = rawlen(v)
-            if not isSequence(v, n) then return false end
+        elseif not isSequence(v, n) then
+            return false
         end
-        if n > count and not restTest then return false end
         for i = 1, count do
             if not tests[i](get(v, i)) then return false end
         end
@@ -485,38 +679,44 @@ testBuilders.tuple = function(d)
     end
 end
 
-checkBuilders.tuple = function(d)
+checkBuilders.tuple = function(d, lim)
     local items, rest, meta = d.items, d.rest, d.meta
     local count = #items
+    local maxDepth, maxKeys = lim.maxDepth, lim.maxKeys
     local checks = {}
-    for i = 1, count do checks[i] = items[i]._check end
-    local restCheck = rest and rest._check
+    for i = 1, count do checks[i] = sub(items[i], "_check", lim) end
+    local restCheck = rest and sub(rest, "_check", lim)
     local get = meta and indexGet or rawget
     return function(v, path, depth, errs)
+        if depth >= maxDepth then
+            return emit(errs, path, depth, "too_deep", maxDepth)
+        end
         if type(v) ~= "table" then
             return emit(errs, path, depth, "invalid_type", "tuple", describe(v))
         end
-        local n, ok
-        if meta then
-            n = #v
-            ok = holeFree(v, n)
-        else
-            n = rawlen(v)
-            ok = isSequence(v, n)
+        local n
+        if meta then n = #v else n = rawlen(v) end
+        if n > maxKeys then
+            return emit(errs, path, depth, "too_many_keys", maxKeys, n, "array")
         end
+        local ok
+        if meta then ok = holeFree(v, n) else ok = isSequence(v, n) end
         if not ok then
             return emit(errs, path, depth, "invalid_array", "sequence", "table")
         end
         if n > count and not restCheck then
             errs = emit(errs, path, depth, "too_big", count, n, "array")
         end
+        local cap = path.cap
         local nd = depth + 1
         for i = 1, count do
+            if full(errs, cap) then return errs end
             path[nd] = i
             errs = checks[i](get(v, i), path, nd, errs)
         end
         if restCheck then
             for i = count + 1, n do
+                if full(errs, cap) then return errs end
                 path[nd] = i
                 errs = restCheck(get(v, i), path, nd, errs)
             end
@@ -525,26 +725,54 @@ checkBuilders.tuple = function(d)
     end
 end
 
-testBuilders.record = function(d)
-    local keyTest, valueTest = d.key._test, d.value._test
+testBuilders.record = function(d, lim, dyn)
+    local maxDepth, maxKeys = lim.maxDepth, lim.maxKeys
+    local childKey = dyn and "_testD" or "_test"
+    local keyTest, valueTest = sub(d.key, childKey, lim), sub(d.value, childKey, lim)
+    if dyn then
+        return function(v, D)
+            D = D or 0
+            if D >= maxDepth or type(v) ~= "table" then return false end
+            local nd = D + 1
+            local c = 0
+            for k, x in next, v do
+                c = c + 1
+                if c > maxKeys or not keyRank[type(k)] or not keyTest(k, nd) or not valueTest(x, nd) then
+                    return false
+                end
+            end
+            return true
+        end
+    end
     return function(v)
         if type(v) ~= "table" then return false end
+        local c = 0
         for k, x in next, v do
-            if not keyRank[type(k)] or not keyTest(k) or not valueTest(x) then return false end
+            c = c + 1
+            if c > maxKeys or not keyRank[type(k)] or not keyTest(k) or not valueTest(x) then return false end
         end
         return true
     end
 end
 
-checkBuilders.record = function(d)
-    local keyCheck, valueCheck = d.key._check, d.value._check
+checkBuilders.record = function(d, lim)
+    local maxDepth, maxKeys = lim.maxDepth, lim.maxKeys
+    local keyCheck, valueCheck = sub(d.key, "_check", lim), sub(d.value, "_check", lim)
     return function(v, path, depth, errs)
+        if depth >= maxDepth then
+            return emit(errs, path, depth, "too_deep", maxDepth)
+        end
         if type(v) ~= "table" then
             return emit(errs, path, depth, "invalid_type", "record", describe(v))
         end
-        local list, n, exotic = collectKeys(v)
+        local list, n, exotic, over = collectKeys(v, maxKeys)
+        if over then
+            return emit(errs, path, depth, "too_many_keys", maxKeys)
+        end
+        local cap = path.cap
         local nd = depth + 1
         for i = 1, n do
+            if full(errs, cap) then return errs end
             local k = list[i]
             path[nd] = k
             errs = keyCheck(k, path, nd, errs)
@@ -556,6 +784,7 @@ checkBuilders.record = function(d)
 end
 
 M.emit = emit
+M.full = full
 M.describe = describe
 M.gotValue = gotValue
 M.copyList = copyList
@@ -569,23 +798,35 @@ M.isSequence = isSequence
 M.holeFree = holeFree
 M.reportUnknownKeys = reportUnknownKeys
 M.indexGet = indexGet
+M.arrayMax = arrayMax
+M.tupleMax = tupleMax
+M.resolveTarget = resolveTarget
 
-function M.test(node)
-    local build = testBuilders[node.kind]
-    if not build then error("zigo: no test compiler for kind '" .. tostring(node.kind) .. "'", 2) end
-    local fn = build(node.d)
-    if node.d.optional then
+function M.lazyTest(d, lim, dyn)
+    return testBuilders.lazy(d, lim, dyn)
+end
+
+function M.test(nd, lim, dyn)
+    local build = testBuilders[nd.kind]
+    if not build then error("zigo: no test compiler for kind '" .. tostring(nd.kind) .. "'", 2) end
+    lim = lim or nd._limits
+    local fn = build(nd.d, lim, dyn)
+    if nd.d.optional then
         local inner = fn
+        if dyn then
+            return function(v, D) return v == nil or inner(v, D) end
+        end
         return function(v) return v == nil or inner(v) end
     end
     return fn
 end
 
-function M.check(node)
-    local build = checkBuilders[node.kind]
-    if not build then error("zigo: no check compiler for kind '" .. tostring(node.kind) .. "'", 2) end
-    local fn = build(node.d)
-    if node.d.optional then
+function M.check(nd, lim)
+    local build = checkBuilders[nd.kind]
+    if not build then error("zigo: no check compiler for kind '" .. tostring(nd.kind) .. "'", 2) end
+    lim = lim or nd._limits
+    local fn = build(nd.d, lim)
+    if nd.d.optional then
         local inner = fn
         return function(v, path, depth, errs)
             if v == nil then return errs end
