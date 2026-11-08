@@ -39,6 +39,9 @@ build = {
         ["zigo.types.array"]          = "zigo/types/array.lua",
         ["zigo.types.object"]         = "zigo/types/object.lua",
         ["zigo.types.coerce"]         = "zigo/types/coerce.lua",
+        ["zigo.types.tuple"]          = "zigo/types/tuple.lua",
+        ["zigo.types.record"]         = "zigo/types/record.lua",
+        ["zigo.types.union"]          = "zigo/types/union.lua",
     },
     copy_directories = { "docs", "types" },
 }

@@ -100,7 +100,7 @@ leaves.never = function()
     return { "true" }
 end
 
-local gen
+local gen, build
 
 local function tableGuard(ctx, d, v)
     add(ctx, "if type(" .. v .. ") ~= \"table\" then return false end")
@@ -110,7 +110,7 @@ local function tableGuard(ctx, d, v)
 end
 
 local function rejectsNil(node)
-    return not node.d.optional and node.kind ~= "any" and node.kind ~= "unknown"
+    return not node.d.optional and node.kind ~= "any" and node.kind ~= "unknown" and node.kind ~= "union"
 end
 
 containers.object = function(ctx, d, v)
@@ -159,6 +159,89 @@ containers.array = function(ctx, d, v)
     add(ctx, "end")
 end
 
+local function variantTest(node)
+    local fn = build(node)
+    if not fn then error("zigo: codegen failed for a union variant") end
+    return fn
+end
+
+containers.union = function(ctx, d, v)
+    local calls = {}
+    for i = 1, #d.variants do
+        calls[i] = const(ctx, variantTest(d.variants[i])) .. "(" .. v .. ")"
+    end
+    add(ctx, "if not (" .. concat(calls, " or ") .. ") then return false end")
+end
+
+containers.discriminatedUnion = function(ctx, d, v)
+    add(ctx, "if type(" .. v .. ") ~= \"table\" then return false end")
+    if not d.meta then
+        add(ctx, "if getmetatable(" .. v .. ") ~= nil then return slow(v) end")
+    end
+    local dispatch = {}
+    for i = 1, #d.values do dispatch[d.values[i]] = variantTest(d.variants[i]) end
+    local t = fresh(ctx, "u")
+    add(ctx, "do local " .. t .. " = " .. const(ctx, dispatch) .. "[" .. v .. "[" .. quote(d.key) .. "]]")
+    add(ctx, "if " .. t .. " == nil or not " .. t .. "(" .. v .. ") then return false end end")
+end
+
+containers.tuple = function(ctx, d, v)
+    tableGuard(ctx, d, v)
+    local items, rest = d.items, d.rest
+    local count = #items
+    local n = fresh(ctx, "n")
+    add(ctx, "local " .. n .. " = #" .. v)
+    if d.meta then
+        local i = fresh(ctx, "i")
+        add(ctx, "for " .. i .. " = 1, " .. n .. " do if " .. v .. "[" .. i .. "] == nil then return false end end")
+    else
+        local c = fresh(ctx, "c")
+        add(ctx, "local " .. c .. " = 0")
+        add(ctx, "for _ in next, " .. v .. " do " .. c .. " = " .. c .. " + 1 if " .. c .. " > " .. n
+            .. " then return false end end")
+        add(ctx, "if " .. c .. " ~= " .. n .. " then return false end")
+    end
+    if not rest then
+        add(ctx, "if " .. n .. " > " .. count .. " then return false end")
+    end
+    for i = 1, count do
+        local f = fresh(ctx, "f")
+        local mark = ctx.nl
+        add(ctx, "do local " .. f .. " = " .. v .. "[" .. i .. "]")
+        local opened = ctx.nl
+        gen(ctx, items[i], f)
+        if ctx.nl == opened then
+            ctx.nl = mark
+        else
+            add(ctx, "end")
+        end
+    end
+    if rest then
+        local i, e = fresh(ctx, "i"), fresh(ctx, "e")
+        local mark = ctx.nl
+        add(ctx, "for " .. i .. " = " .. (count + 1) .. ", " .. n .. " do local " .. e .. " = " .. v .. "[" .. i .. "]")
+        local opened = ctx.nl
+        gen(ctx, rest, e)
+        if ctx.nl == opened then
+            ctx.nl = mark
+        else
+            add(ctx, "end")
+        end
+    end
+end
+
+containers.record = function(ctx, d, v)
+    add(ctx, "if type(" .. v .. ") ~= \"table\" then return false end")
+    local k, x, t = fresh(ctx, "k"), fresh(ctx, "x"), fresh(ctx, "t")
+    add(ctx, "for " .. k .. ", " .. x .. " in next, " .. v .. " do")
+    add(ctx, "local " .. t .. " = type(" .. k .. ")")
+    add(ctx, "if " .. t .. " ~= \"string\" and " .. t .. " ~= \"number\" and " .. t
+        .. " ~= \"boolean\" then return false end")
+    gen(ctx, d.key, k)
+    gen(ctx, d.value, x)
+    add(ctx, "end")
+end
+
 gen = function(ctx, node, v)
     local kind, d = node.kind, node.d
     local leaf = leaves[kind]
@@ -182,7 +265,7 @@ gen = function(ctx, node, v)
     if d.optional then add(ctx, "end") end
 end
 
-local function build(node)
+function build(node)
     local loader = loadstring or load
     if not loader then return nil end
     local ctx = { lines = {}, nl = 0, consts = {}, nc = 0, index = {}, uid = 0 }

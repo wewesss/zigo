@@ -48,6 +48,12 @@ M.messages = {
         if i.got then return "Unrecognized key of type " .. tostring(i.got) end
         return "Unrecognized key"
     end,
+    invalid_union = function()
+        return "Input matches none of the union variants"
+    end,
+    invalid_union_discriminator = function(i)
+        return "Expected discriminator one of: " .. fmtValue(i.expected) .. ", got " .. fmtValue(i.got)
+    end,
     custom = function()
         return "Invalid input"
     end,

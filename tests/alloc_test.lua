@@ -73,6 +73,24 @@ return function(env)
         assertTrue(bytesPerCall(function(v) return P:is(v) end, nil) < BUDGET)
     end)
 
+    test("zero allocation: unions, tuples and records on the valid path", function()
+        local Container = z.object({
+            u = z.union(z.string(), z.integer()),
+            d = z.discriminatedUnion("kind",
+                z.object({ kind = z.literal("a"), n = z.integer() }),
+                z.object({ kind = z.literal("b"), s = z.string() })),
+            t = z.tuple({ z.string(), z.integer() }):rest(z.boolean()),
+            r = z.record(z.string(), z.integer()),
+        }):strict()
+        local value = {
+            u = 4, d = { kind = "b", s = "x" }, t = { "a", 1, true, false }, r = { a = 1, b = 2, c = 3 },
+        }
+        assertEq(Container.pure, true)
+        assertTrue(bytesPerCall(Container._test, value) < BUDGET)
+        assertTrue(bytesPerCall(function(v) return Container:is(v) end, value) < BUDGET)
+        assertTrue(bytesPerCall(function(v) return Container:safeParse(v) end, value) < BUDGET)
+    end)
+
     test("the invalid path does allocate (sanity check of the probe)", function()
         local bad = { id = "x" }
         local per = bytesPerCall(function(v) return Schema:safeParse(v) end, bad)

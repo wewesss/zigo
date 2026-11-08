@@ -217,8 +217,64 @@ local function s4()
     }
 end
 
-M.s1, M.s2, M.s3, M.s4 = s1, s2, s3, s4
+local VARIANTS = 10
 
-M.all = { s1, s2, s3, s4 }
+local function s5()
+    local inputs = {}
+    for i = 1, 64 do
+        local k = i % VARIANTS + 1
+        inputs[i] = { kind = "k" .. k, x = k + i % 7, label = ("l"):rep(1 + i % 16) }
+        if i % 5 == 0 then inputs[i].extra = i end
+    end
+    return {
+        name = "S5 discriminatedUnion, 10 variants",
+        inputs = inputs,
+        invalid = {
+            { kind = "zz", x = 1, label = "a" },
+            { x = 1, label = "a" },
+            { kind = 1, x = 1, label = "a" },
+            { kind = "k3", x = 2, label = "a" },
+            { kind = "k10", x = 9, label = "a" },
+            { kind = "k1", x = 2.5, label = "a" },
+            { kind = "k1", x = "1", label = "a" },
+            { kind = "k1", label = "a" },
+            { kind = "k7", x = 7, label = "" },
+            { kind = "k7", x = 7, label = ("l"):rep(17) },
+            { kind = "k7", x = 7 },
+            {},
+            "k1",
+            5,
+        },
+        build = function(z)
+            local variants = {}
+            for i = 1, VARIANTS do
+                variants[i] = z.object({
+                    kind = z.literal("k" .. i),
+                    x = z.integer():min(i),
+                    label = z.string():min(1):max(16),
+                })
+            end
+            return z.discriminatedUnion("kind", (table.unpack or unpack)(variants))
+        end,
+        hand = function(v)
+            if type(v) ~= "table" then return false end
+            local k = v.kind
+            local min
+            if k == "k1" then min = 1 elseif k == "k2" then min = 2 elseif k == "k3" then min = 3
+            elseif k == "k4" then min = 4 elseif k == "k5" then min = 5 elseif k == "k6" then min = 6
+            elseif k == "k7" then min = 7 elseif k == "k8" then min = 8 elseif k == "k9" then min = 9
+            elseif k == "k10" then min = 10 else return false end
+            local x = v.x
+            if type(x) ~= "number" or x % 1 ~= 0 or x < min then return false end
+            local label = v.label
+            if type(label) ~= "string" or #label < 1 or #label > 16 then return false end
+            return true
+        end,
+    }
+end
+
+M.s1, M.s2, M.s3, M.s4, M.s5 = s1, s2, s3, s4, s5
+
+M.all = { s1, s2, s3, s4, s5 }
 
 return M
