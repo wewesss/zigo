@@ -1527,6 +1527,11 @@ return function(env)
     end
 
     local function fitsInt64(digits, negative)
+        if not (nativeInt or ffi) then
+            if #digits < 16 then return true end
+            if #digits > 16 then return false end
+            return digits <= "9007199254740992"
+        end
         if #digits < 19 then return true end
         if #digits > 19 then return false end
         return digits <= (negative and "9223372036854775808" or "9223372036854775807")
