@@ -298,9 +298,10 @@ Scénarios :
 - [x] Nom : `zigo` (décidé le 2026-11-08, remplace validigo)
 - [x] Namespace : `z` (décidé le 2026-11-08, clin d'œil à Zod ; une lettre par lib, `m`/`P` pour matchigo)
 - [ ] Vérifier la disponibilité de `zigo` sur LuaRocks avant de réserver
-- [ ] Défaut des clés inconnues : `passthrough` (proposé) ou `strict`
-- [ ] `integer()` accepte-t-il `3.0` en 5.3+ par défaut ?
-- [ ] Messages d'erreur : FR et EN intégrés, ou format seul et i18n laissée à l'utilisateur ?
+- [x] Défaut des clés inconnues : `passthrough`, `:strict()` à la demande (2026-11-08)
+- [x] `integer()` accepte `3.0` en 5.3+ par défaut, `{ strict = true }` pour refuser (2026-11-08)
+- [x] Messages d'erreur : codes stables + anglais intégré, table de messages remplaçable (2026-11-08)
+- [x] Budgets §6 : bloquants en local (`bench/budgets.lua`), informatifs en CI (2026-11-08)
 - [ ] Compilation par paliers en v2 : seulement si S9 montre un vrai problème
 
 ---
