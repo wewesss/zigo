@@ -1,14 +1,14 @@
-# validigo — design & architecture
+# zigo — design & architecture
 
 > Validateur de données façon Zod pour Lua 5.1 → 5.4 et LuaJIT.
-> Famille : [matchigo](https://github.com/wewesss/matchigo-lua) (pattern matching) · classigo (classes CSS) · **validigo** (validation).
+> Famille : [matchigo](https://github.com/wewesss/matchigo-lua) (pattern matching) · classigo (classes CSS) · **zigo** (validation).
 > Licence MIT · zéro dépendance · bundle single-file comme matchigo-lua.
 
 ---
 
 ## 1. Périmètre
 
-**validigo garde le côté Lua de chaque frontière.** Tout ce qui entre dans Lua (résultat SQL, retour FFI C/Rust/ASM/Lurlang, paquet réseau, config, input utilisateur) passe par un schéma qui le vérifie et rend une valeur sûre.
+**zigo garde le côté Lua de chaque frontière.** Tout ce qui entre dans Lua (résultat SQL, retour FFI C/Rust/ASM/Lurlang, paquet réseau, config, input utilisateur) passe par un schéma qui le vérifie et rend une valeur sûre.
 
 Dans le périmètre v1 :
 - API fluente immuable façon Zod (`v.object`, `v.string():min(3)`, `:optional()`…)
@@ -80,7 +80,7 @@ C'est un chemin rare : il ne justifie pas un second générateur de code à main
 ### Arborescence
 
 ```
-validigo/
+zigo/
   init.lua            -- API publique v.*
   node.lua            -- constructeur de nœud, immutabilité, flags, cache de compilation
   types/              -- un fichier par famille : primitives, string, number, int64,
@@ -100,7 +100,7 @@ tests/  bench/  docs/fr  docs/en  build.lua  dist/
 ## 4. API publique
 
 ```lua
-local v = require("validigo")
+local v = require("zigo")
 
 local User = v.object({
     id      = v.int64(),                         -- number entier ≤ 2^53, cdata int64 (LuaJIT)
@@ -153,10 +153,10 @@ Mesuré (§6, union et schéma de référence) : utiliser matchigo comme moteur 
 - Même en utilisant le fast-path littéral sur `v.kind` : jamais mieux qu'une simple table `map[v.kind]`, et 1,7× plus lent en LuaJIT et en 5.4 (un appel de fonction en plus).
 - Coût : le bundle matchigo fait 71 Ko et 2 243 lignes (DSL, BigInt, Map, Set), pour rien d'utile au validateur.
 
-Décision : **validigo est autonome, sans aucune dépendance**. Pas de variantes « lite » et « avec matchigo » : un seul bundle. Ce qu'on reprend de matchigo, ce sont les *idées* (prédicats construits une fois, fast-path par hachage, framework de bench), pas le code.
+Décision : **zigo est autonome, sans aucune dépendance**. Pas de variantes « lite » et « avec matchigo » : un seul bundle. Ce qu'on reprend de matchigo, ce sont les *idées* (prédicats construits une fois, fast-path par hachage, framework de bench), pas le code.
 
 ### Interop matchigo
-`buildTest` de matchigo-lua lit `pat._test` avant tout le reste : **un nœud validigo qui expose `_test` est un pattern matchigo, sans dépendance**. `_test` est fourni via `__index` paresseux (compile au premier accès, puis `rawset`), pour que matchigo capture directement la fonction finale.
+`buildTest` de matchigo-lua lit `pat._test` avant tout le reste : **un nœud zigo qui expose `_test` est un pattern matchigo, sans dépendance**. `_test` est fourni via `__index` paresseux (compile au premier accès, puis `rawset`), pour que matchigo capture directement la fonction finale.
 ⚠ À vérifier par un test d'intégration : le chemin `compile.lua` de matchigo (fast-path littéral, `P.select`) avec un nœud non-`P`.
 
 ```lua
@@ -228,7 +228,7 @@ Conclusions :
 2. **Two-pass** : le valide est servi par la fonction la plus rapide ; l'invalide coûte un walk de plus, acceptable.
 3. **Le chemin invalide alloue ~400–570 octets par appel** (tables d'erreurs et chemins). Sur le réseau, un attaquant contrôle ce chemin : `abortEarly` et `maxErrors` sont obligatoires en v1, pas des options futures.
 4. **Cold path : 30–80 µs en P50, jusqu'à 320 µs en P99** avec codegen. D'où la compilation paresseuse et cachée, et la règle « jamais dans un handler ». Piste v2 : compilation par paliers (closures d'abord, codegen après N appels) si le cold path pose problème au démarrage.
-5. Seul cas où matchigo bat validigo : le **fallback closures sous LuaJIT** (222 ns contre 464 ns). C'est à corriger dans les closures de validigo (moins de niveaux d'appel, champs déroulés pour les petits objets), pas une raison de dépendre de matchigo.
+5. Seul cas où matchigo bat zigo : le **fallback closures sous LuaJIT** (222 ns contre 464 ns). C'est à corriger dans les closures de zigo (moins de niveaux d'appel, champs déroulés pour les petits objets), pas une raison de dépendre de matchigo.
 6. Effet de bord utile : matchigo-lua a le même plafond en LuaJIT (222 ns contre 42 ns). Le codegen de `_test` pourrait lui être appliqué aussi.
 
 ### Budgets v1 (bloquants en CI bench)
@@ -295,7 +295,7 @@ Scénarios :
 
 ## 10. Décisions ouvertes
 
-- [ ] Nom définitif : `validigo` (namespace `v`) ou `zigo` (namespace `z`, clin d'œil direct à Zod). Vérifier la disponibilité sur LuaRocks, npm et GitHub avant de réserver. Convention de famille : un namespace d'une lettre par lib (`m`/`P` matchigo, `v` ou `z` ici)
+- [ ] Nom définitif : `zigo` (namespace `v`) ou `zigo` (namespace `z`, clin d'œil direct à Zod). Vérifier la disponibilité sur LuaRocks, npm et GitHub avant de réserver. Convention de famille : un namespace d'une lettre par lib (`m`/`P` matchigo, `v` ou `z` ici)
 - [ ] Défaut des clés inconnues : `passthrough` (proposé) ou `strict`
 - [ ] `integer()` accepte-t-il `3.0` en 5.3+ par défaut ?
 - [ ] Messages d'erreur : FR et EN intégrés, ou format seul et i18n laissée à l'utilisateur ?

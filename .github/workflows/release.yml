@@ -1,0 +1,64 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Lua 5.4
+        uses: leafo/gh-actions-lua@v10
+        with:
+          luaVersion: "5.4"
+
+      - name: Build the bundled distribution
+        run: lua build.lua
+
+      - name: Sanity check — run tests against the bundle
+        run: lua tests/run.lua dist
+
+      - name: Stage the release tree
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          STAGE="release/zigo-${REF_NAME}"
+          mkdir -p "${STAGE}/zigo-type"
+
+          cp dist/zigo.lua     "${STAGE}/"
+          cp dist/zigo.min.lua "${STAGE}/"
+
+          cp types/*.d.lua "${STAGE}/zigo-type/"
+
+          cp .github/release-readme.md "${STAGE}/README.md"
+          cp LICENSE                   "${STAGE}/"
+
+          ls -la "${STAGE}"
+          ls -la "${STAGE}/zigo-type"
+
+      - name: Create the zip archive
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          cd release
+          zip -r "../zigo-${REF_NAME}.zip" "zigo-${REF_NAME}"
+          cd ..
+          ls -la "zigo-${REF_NAME}.zip"
+
+      - name: Create the GitHub release (draft) and upload the zip
+        uses: softprops/action-gh-release@v2
+        with:
+          name: zigo ${{ github.ref_name }}
+          draft: true
+          generate_release_notes: true
+          files: zigo-${{ github.ref_name }}.zip

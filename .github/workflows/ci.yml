@@ -1,0 +1,99 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Lua ${{ matrix.lua }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        lua:
+          - "5.1"
+          - "5.2"
+          - "5.3"
+          - "5.4"
+          - "luajit-openresty"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Lua ${{ matrix.lua }}
+        uses: leafo/gh-actions-lua@v10
+        with:
+          luaVersion: ${{ matrix.lua }}
+
+      - name: Symlink luajit → lua (LuaJIT cells only)
+        if: contains(matrix.lua, 'luajit')
+        run: |
+          set -euo pipefail
+          luajit_path="$(command -v luajit)"
+          echo "Linking ${luajit_path} -> /usr/local/bin/lua"
+          sudo ln -sf "${luajit_path}" /usr/local/bin/lua
+          lua -v
+
+      - name: Run tests against the source tree
+        run: lua tests/run.lua
+
+      - name: Build the bundled distribution
+        run: lua build.lua
+
+      - name: Run tests against the bundle
+        run: lua tests/run.lua dist
+
+  bench-smoke:
+    name: Bench smoke (${{ matrix.lua }})
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    strategy:
+      fail-fast: false
+      matrix:
+        lua:
+          - "5.1"
+          - "5.4"
+          - "luajit-openresty"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Lua ${{ matrix.lua }}
+        uses: leafo/gh-actions-lua@v10
+        with:
+          luaVersion: ${{ matrix.lua }}
+
+      - name: Symlink luajit → lua (LuaJIT cells only)
+        if: contains(matrix.lua, 'luajit')
+        run: |
+          set -euo pipefail
+          luajit_path="$(command -v luajit)"
+          sudo ln -sf "${luajit_path}" /usr/local/bin/lua
+          lua -v
+
+      - name: Build the bundled distribution
+        run: lua build.lua
+
+      - name: Clone matchigo-lua (union bench dependency)
+        run: git clone --depth 1 https://github.com/wewesss/matchigo-lua.git matchigo-lua
+
+      - name: Run the bench (smoke configuration)
+        run: lua bench/run.lua --fast
+
+      - name: Upload bench artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bench-${{ matrix.lua }}
+          path: |
+            bench/results/runtime-*.md
+            bench/results/.stats/*.lua
+          if-no-files-found: warn

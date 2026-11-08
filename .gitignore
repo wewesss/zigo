@@ -1,1 +1,5 @@
 /matchigo-lua/
+/dist/
+.lua/
+bench/results/.stats
+*.rock
