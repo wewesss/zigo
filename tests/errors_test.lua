@@ -107,8 +107,8 @@ return function(env)
 
     test("unknown code falls back to the code itself", function()
         local _, _, err = z.string():safeParse(1)
-        err.issues = { { path = {}, code = "custom" } }
-        assertEq(err:format(), "<root>: custom")
+        err.issues = { { path = {}, code = "mystery" } }
+        assertEq(err:format(), "<root>: mystery")
     end)
 
     test("literal and exact-length messages", function()

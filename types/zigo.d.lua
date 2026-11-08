@@ -9,6 +9,7 @@
 ---@field got any
 ---@field type? string
 ---@field exact? boolean
+---@field message? string
 
 ---@class zigo.Flattened
 ---@field formErrors string[]
@@ -28,17 +29,46 @@ function Error:format(messages) end
 ---@return zigo.Flattened
 function Error:flatten(messages) end
 
+---@class zigo.Context
+local Context = {}
+
+---@param issue { message?: string, code?: string, path?: zigo.Path }
+function Context:addIssue(issue) end
+
+---@class zigo.RefineOptions
+---@field message? string
+---@field code? string
+---@field path? zigo.Path
+
 ---@class zigo.Node
 ---@field kind string
 ---@field pure boolean
 ---@field maxDepth integer
 ---@field isOptional boolean
 ---@field _test fun(v: any): boolean
+---@field _parse fun(v: any, ctx: zigo.Context, depth: integer): boolean, any
 ---@field _check fun(v: any, path: zigo.Path, depth: integer, errs: zigo.Issue[]|nil): zigo.Issue[]|nil
 local Node = {}
 
 ---@return zigo.Node
 function Node:optional() end
+
+---@param x any value returned as-is when the input is nil, or a function called each time
+---@return zigo.Node
+function Node:default(x) end
+
+---@param fn fun(v: any, ctx: zigo.Context): any must be free of side effects
+---@return zigo.Node
+function Node:transform(fn) end
+
+---@param fn fun(v: any, ctx: zigo.Context): any
+---@param opts? zigo.RefineOptions
+---@return zigo.Node
+function Node:refine(fn, opts) end
+
+---@param schema zigo.Node
+---@return zigo.Node
+function Node:pipe(schema) end
 
 ---@param v any
 ---@return boolean
@@ -80,14 +110,34 @@ local ObjectNode = {}
 ---@return zigo.ObjectNode
 function ObjectNode:strict() end
 
+---@return zigo.ObjectNode
+function ObjectNode:strip() end
+
 ---@class zigo.IntegerOptions
 ---@field strict? boolean
 
 ---@class zigo.ContainerOptions
 ---@field meta? boolean
 
+---@class zigo.Coerce
+local Coerce = {}
+
+---@return zigo.SizedNode
+function Coerce.number() end
+
+---@param opts? zigo.IntegerOptions
+---@return zigo.SizedNode
+function Coerce.integer(opts) end
+
+---@return zigo.Node
+function Coerce.boolean() end
+
+---@return zigo.SizedNode
+function Coerce.string() end
+
 ---@class zigo
 ---@field _VERSION string
+---@field coerce zigo.Coerce
 ---@field messages table<string, zigo.Message>
 local zigo = {}
 

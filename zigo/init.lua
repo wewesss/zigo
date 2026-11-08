@@ -2,12 +2,21 @@ local node = require("zigo.node")
 local errors = require("zigo.errors")
 local closures = require("zigo.compile.closures")
 local codegen = require("zigo.compile.codegen")
+local parse = require("zigo.compile.parse")
 local primitives = require("zigo.types.primitives")
 local array = require("zigo.types.array")
 local object = require("zigo.types.object")
+local coerce = require("zigo.types.coerce")
 
-node.setCompiler("_test", codegen.test)
-node.setCompiler("_check", closures.check)
+node.setCompiler("_test", function(self)
+    if self.pure then return codegen.test(self) end
+    return parse.test(self)
+end)
+node.setCompiler("_check", function(self)
+    if self.pure then return closures.check(self) end
+    return parse.check(self)
+end)
+node.setCompiler("_parse", parse.build)
 
 local function config(opts)
     if opts ~= nil then
@@ -45,6 +54,12 @@ return {
     never = primitives.never,
     array = array.array,
     object = object.object,
+    coerce = {
+        number = coerce.number,
+        integer = coerce.integer,
+        boolean = coerce.boolean,
+        string = coerce.string,
+    },
     config = config,
     isNode = node.isNode,
     isError = errors.isError,

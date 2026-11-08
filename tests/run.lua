@@ -83,6 +83,8 @@ dofile("tests/immutability_test.lua")(env)
 dofile("tests/determinism_test.lua")(env)
 dofile("tests/traps_test.lua")(env)
 dofile("tests/codegen_test.lua")(env)
+dofile("tests/impure_test.lua")(env)
+dofile("tests/coerce_test.lua")(env)
 dofile("tests/fuzz_test.lua")(env)
 dofile("tests/alloc_test.lua")(env)
 

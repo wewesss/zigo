@@ -25,6 +25,63 @@ return function(env)
         end
     end)
 
+    test("default, transform, refine, pipe and strip return new nodes and leave the source untouched", function()
+        local keep = function(v) return v end
+        local cases = {
+            { z.string(), function(n) return n:default("x") end },
+            { z.string(), function(n) return n:transform(keep) end },
+            { z.string(), function(n) return n:refine(keep, { message = "m" }) end },
+            { z.string(), function(n) return n:pipe(z.string()) end },
+            { z.object({ a = z.string() }), function(n) return n:strip() end },
+            { z.object({ a = z.string() }), function(n) return n:strict() end },
+        }
+        for _, case in ipairs(cases) do
+            local base, apply = case[1], case[2]
+            local before = copyDescriptor(base)
+            local derived = apply(base)
+            assertTrue(derived ~= base)
+            assertDeepEq(copyDescriptor(base), before)
+            assertTrue(base.pure or false)
+        end
+    end)
+
+    test("a chain is copied on each step so earlier nodes keep their own chain", function()
+        local keep = function(v) return v end
+        local first = z.string():transform(keep)
+        local second = first:refine(function() return true end)
+        local third = first:transform(keep)
+        assertEq(#first.d.chain, 1)
+        assertEq(#second.d.chain, 2)
+        assertEq(#third.d.chain, 2)
+        assertTrue(first.d.chain ~= second.d.chain)
+        assertTrue(second.d.chain ~= third.d.chain)
+        assertEq(second.d.chain[2].op, "refine")
+        assertEq(third.d.chain[2].op, "transform")
+        assertEq(z.string().d.chain, nil)
+    end)
+
+    test("impure derivations do not change the verdicts of their source", function()
+        local base = z.string()
+        local withDefault = base:default("x")
+        local withRefine = base:refine(function(v) return v ~= "no" end)
+        assertFalse(base:is(nil))
+        assertTrue(withDefault:is(nil))
+        assertTrue(base:is("no"))
+        assertFalse(withRefine:is("no"))
+        assertEq(base:parse("a"), "a")
+        assertTrue(base.pure)
+        assertFalse(withDefault.pure)
+    end)
+
+    test("strip leaves a shared strict schema intact", function()
+        local strict = z.object({ a = z.number() }):strict()
+        local stripped = strict:strip()
+        assertFalse(strict:is({ a = 1, b = 2 }))
+        assertTrue(stripped:is({ a = 1, b = 2 }))
+        assertEq(strict.d.strict, true)
+        assertEq(stripped.d.strict, false)
+    end)
+
     test("a derived node does not affect its source verdicts", function()
         local base = z.string()
         local short = base:max(2)

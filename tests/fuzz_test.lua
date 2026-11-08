@@ -3,6 +3,8 @@ return function(env)
     local assertTrue, assertEq = env.assertTrue, env.assertEq
 
     local SEED = 20261108
+    local IMPURE_SEED = 20261109
+    local IMPURE_SCHEMAS = 2500
     local SCHEMAS = 4000
     local INPUTS = 8
     local MAX_DEPTH = 3
@@ -139,6 +141,11 @@ return function(env)
         end
         if spec.value ~= nil then parts[#parts + 1] = "=" .. show(spec.value) end
         if spec.values then parts[#parts + 1] = "in " .. show(spec.values) end
+        if spec.strip then parts[#parts + 1] = "strip" end
+        for _, step in ipairs(spec.chain or {}) do parts[#parts + 1] = step.op .. ":" .. step.def end
+        if spec.default then
+            parts[#parts + 1] = "default@" .. spec.default.at .. "=" .. show(spec.default.value)
+        end
         if spec.optional then parts[#parts + 1] = "optional" end
         local out = table.concat(parts, " ")
         if spec.kind == "array" then out = out .. " of (" .. describe(spec.item) .. ")" end
@@ -148,6 +155,49 @@ return function(env)
             out = out .. " {" .. table.concat(fields, "; ") .. "}"
         end
         return out
+    end
+
+    local transformDefs = {
+        box = function(v) return { v } end,
+        const = function() return 42 end,
+        drop = function() return nil end,
+        noNumbers = function(v, ctx)
+            if type(v) == "number" then ctx:addIssue({ message = "no numbers" }) end
+            return v
+        end,
+    }
+    local transformNames = { "box", "const", "drop", "noNumbers" }
+
+    local refineDefs = {
+        notFalse = function(v) return v ~= false end,
+        truthy = function(v) return v end,
+        notNumber = function(v) return type(v) ~= "number" end,
+        reporter = function(v, ctx)
+            if type(v) == "string" then ctx:addIssue({ message = "no strings" }) end
+            return true
+        end,
+    }
+    local refineNames = { "notFalse", "truthy", "notNumber", "reporter" }
+
+    local defaultValues = {
+        5, "d", false, {}, function() return { made = true } end, function() return 7 end,
+    }
+
+    local function applyImpure(n, spec)
+        local chain = spec.chain or {}
+        local default = spec.default
+        for i = 0, #chain do
+            if default and default.at == i then n = n:default(default.value) end
+            local step = chain[i + 1]
+            if step then
+                if step.op == "transform" then
+                    n = n:transform(transformDefs[step.def])
+                else
+                    n = n:refine(refineDefs[step.def], { message = "refined" })
+                end
+            end
+        end
+        return n
     end
 
     local function build(spec)
@@ -167,8 +217,10 @@ return function(env)
             for _, f in ipairs(spec.fields) do shape[f.key] = build(f.spec) end
             n = z.object(shape, spec.meta and { meta = true } or nil)
             if spec.strict then n = n:strict() end
+            if spec.strip then n = n:strip() end
         end
         for _, m in ipairs(spec.mods or {}) do n = n[m[1]](n, m[2], m[3]) end
+        n = applyImpure(n, spec)
         if spec.optional then n = n:optional() end
         return n
     end
@@ -194,7 +246,7 @@ return function(env)
 
     local genValid
     genValid = function(spec)
-        if spec.optional and chance(25) then return nil end
+        if (spec.optional or spec.default) and chance(25) then return nil end
         local kind = spec.kind
         if kind == "string" then
             local lo, hi, len = 0, nil, nil
@@ -369,5 +421,253 @@ return function(env)
         assertEq(cases, SCHEMAS * INPUTS)
         assertTrue(accepted >= SCHEMAS)
         assertTrue(rejected >= SCHEMAS)
+    end)
+
+    local function decorate(spec)
+        if spec.kind == "object" then
+            for _, f in ipairs(spec.fields) do decorate(f.spec) end
+        elseif spec.kind == "array" then
+            decorate(spec.item)
+        end
+        if chance(30) then
+            local steps = {}
+            for _ = 1, rand(3) - 1 do
+                if chance(50) then
+                    steps[#steps + 1] = { op = "transform", def = pick(transformNames) }
+                else
+                    steps[#steps + 1] = { op = "refine", def = pick(refineNames) }
+                end
+            end
+            if #steps > 0 then spec.chain = steps end
+            if chance(50) then
+                spec.default = { at = rand(#steps + 1) - 1, value = pick(defaultValues) }
+                if chance(70) then spec.optional = false end
+            end
+            if spec.kind == "object" and chance(40) then spec.strip = true end
+        end
+    end
+
+    local function isPure(spec)
+        if spec.chain or spec.default or spec.strip then return false end
+        if spec.kind == "object" then
+            for _, f in ipairs(spec.fields) do
+                if not isPure(f.spec) then return false end
+            end
+        elseif spec.kind == "array" then
+            return isPure(spec.item)
+        end
+        return true
+    end
+
+    local function needsStructure(spec)
+        if spec.kind == "object" then
+            if spec.strip then return true end
+            for _, f in ipairs(spec.fields) do
+                if not isPure(f.spec) then return true end
+            end
+            return false
+        end
+        return not isPure(spec.item)
+    end
+
+    local function baseOnly(spec)
+        local copy = {}
+        for k, v in pairs(spec) do copy[k] = v end
+        copy.chain, copy.default, copy.optional, copy.strip = nil, nil, nil, nil
+        return copy
+    end
+
+    local function same(a, b)
+        if a == b then return true end
+        if type(a) == "number" and type(b) == "number" then return a ~= a and b ~= b end
+        if type(a) ~= "table" or type(b) ~= "table" then return false end
+        for k, x in next, a do
+            if not same(x, rawget(b, k)) then return false end
+        end
+        for k in next, b do
+            if rawget(a, k) == nil then return false end
+        end
+        return true
+    end
+
+    local function rawLength(t)
+        if rawlen then return rawlen(t) end
+        return #t
+    end
+
+    local pureSchemas = setmetatable({}, { __mode = "k" })
+    local baseSchemas = setmetatable({}, { __mode = "k" })
+
+    local function cached(cache, spec, make)
+        local schema = cache[spec]
+        if not schema then
+            schema = build(make(spec))
+            cache[spec] = schema
+        end
+        return schema
+    end
+
+    local oracle
+
+    local function oracleObject(spec, v)
+        if type(v) ~= "table" then return false end
+        local strict = spec.strict and not spec.strip
+        local out, known = {}, {}
+        if not spec.strip and not strict then
+            for k, x in next, v do out[k] = x end
+        end
+        for _, f in ipairs(spec.fields) do
+            known[f.key] = true
+            local x
+            if spec.meta then x = v[f.key] else x = rawget(v, f.key) end
+            local ok, y = oracle(f.spec, x)
+            if not ok then return false end
+            out[f.key] = y
+        end
+        if strict then
+            for k in next, v do
+                if not known[k] then return false end
+            end
+        end
+        return true, out
+    end
+
+    local function oracleArray(spec, v)
+        if type(v) ~= "table" then return false end
+        local n
+        if spec.meta then
+            n = #v
+            for i = 1, n do
+                if v[i] == nil then return false end
+            end
+        else
+            n = rawLength(v)
+            local count = 0
+            for k in next, v do
+                count = count + 1
+                if type(k) ~= "number" or k < 1 or k > n or k % 1 ~= 0 then return false end
+            end
+            if count ~= n then return false end
+        end
+        local min, max, len
+        for _, m in ipairs(spec.mods) do
+            if m[1] == "min" then min = m[2]
+            elseif m[1] == "max" then max = m[2]
+            elseif m[1] == "len" then len = m[2]
+            else min, max = m[2], m[3] end
+        end
+        if (min and n < min) or (max and n > max) or (len and n ~= len) then return false end
+        local out = {}
+        for i = 1, n do
+            local x
+            if spec.meta then x = v[i] else x = rawget(v, i) end
+            local ok, y = oracle(spec.item, x)
+            if not ok then return false end
+            out[i] = y
+        end
+        return true, out
+    end
+
+    local function oracleBase(spec, v)
+        if spec.kind == "object" and needsStructure(spec) then return oracleObject(spec, v) end
+        if spec.kind == "array" and needsStructure(spec) then return oracleArray(spec, v) end
+        return cached(baseSchemas, spec, baseOnly):is(v), v
+    end
+
+    oracle = function(spec, v)
+        if isPure(spec) then
+            return cached(pureSchemas, spec, function(x) return x end):is(v), v
+        end
+        local chain = spec.chain or {}
+        local nilKind, nilAt
+        if spec.optional then
+            nilKind, nilAt = "optional", #chain
+        elseif spec.default then
+            nilKind, nilAt = "default", spec.default.at
+        end
+        local x, first
+        if v == nil and nilKind then
+            first = nilAt + 1
+            if nilKind == "default" then
+                local value = spec.default.value
+                if type(value) == "function" then x = value() else x = value end
+            end
+        else
+            local ok
+            ok, x = oracleBase(spec, v)
+            if not ok then return false end
+            first = 1
+        end
+        for i = first, #chain do
+            local step = chain[i]
+            local ctx = { failed = false, addIssue = function(self) self.failed = true end }
+            if step.op == "transform" then
+                x = transformDefs[step.def](x, ctx)
+                if ctx.failed then return false end
+            else
+                local pass = refineDefs[step.def](x, ctx)
+                if ctx.failed or not pass then return false end
+            end
+        end
+        return true, x
+    end
+
+    local function disagreement(schema, data, ok, out, err, expectOk, expectOut)
+        if ok ~= expectOk then
+            return ("verdict %s, oracle %s"):format(tostring(ok), tostring(expectOk))
+        end
+        if ok and not same(out, expectOut) then
+            return "output differs: " .. show(out) .. " vs oracle " .. show(expectOut)
+        end
+        if not ok and (out ~= nil or not z.isError(err) or #err.issues < 1) then
+            return "failure without a proper error object"
+        end
+        if schema:is(data) ~= ok then return "is() disagrees with safeParse" end
+        if schema._test(data) ~= ok then return "_test disagrees with safeParse" end
+        if (schema._check(data, {}, 0, nil) == nil) ~= ok then return "_check disagrees with safeParse" end
+        if (pcall(schema.parse, schema, data)) ~= ok then return "parse disagrees with safeParse" end
+        if not ok then
+            local _, _, again = schema:safeParse(data)
+            if again:format() ~= err:format() then return "issues are not deterministic" end
+        end
+        return nil
+    end
+
+    test("fuzz: impure schemas follow the oracle and is() == safeParse ok", function()
+        reseed(IMPURE_SEED)
+        local cases, accepted, rejected, impure = 0, 0, 0, 0
+        for s = 1, IMPURE_SCHEMAS do
+            local spec = genSpec(0)
+            decorate(spec)
+            local schema = build(spec)
+            local pure = isPure(spec)
+            if not pure then impure = impure + 1 end
+            if schema.pure ~= pure then
+                error(("schema #%d purity mismatch: %s\nschema: %s"):format(s, tostring(schema.pure), describe(spec)), 0)
+            end
+            for j = 1, INPUTS do
+                local data = genInput(spec)
+                local expectOk, expectOut = oracle(spec, data)
+                local ran, ok, out, err = pcall(schema.safeParse, schema, data)
+                local problem
+                if ran then
+                    problem = disagreement(schema, data, ok, out, err, expectOk, expectOut)
+                else
+                    problem = "safeParse raised: " .. tostring(ok)
+                end
+                if problem then
+                    error(("%s\nschema #%d input #%d\nschema: %s\ndata: %s"):format(
+                        problem, s, j, describe(spec), show(data)), 0)
+                end
+                cases = cases + 1
+                if ok then accepted = accepted + 1 else rejected = rejected + 1 end
+            end
+        end
+        print(("fuzz impure: %d cases, %d accepted, %d rejected, %d impure schemas"):format(
+            cases, accepted, rejected, impure))
+        assertEq(cases, IMPURE_SCHEMAS * INPUTS)
+        assertTrue(impure >= IMPURE_SCHEMAS / 5)
+        assertTrue(accepted >= IMPURE_SCHEMAS / 2)
+        assertTrue(rejected >= IMPURE_SCHEMAS / 2)
     end)
 end
