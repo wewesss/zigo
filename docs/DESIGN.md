@@ -83,16 +83,22 @@ C'est un chemin rare : il ne justifie pas un second générateur de code à main
 zigo/
   init.lua            -- API publique z.*
   node.lua            -- constructeur de nœud, immutabilité, flags, cache de compilation
-  types/              -- un fichier par famille : primitives, string, number, int64,
-                      -- object, array, tuple, union, enum, literal, lazy, boundary (cdata, null, bytes, utf8)
+  errors.lua          -- codes, format, flatten, table de messages remplaçable
+  limits.lua          -- limites réseau (maxDepth, maxKeys, maxErrors, abortEarly)
+  null.lua            -- sentinelle NULL par défaut et registre des sentinelles
+  types/              -- un fichier par famille : primitives (string, number, integer, boolean,
+                      -- literal, enum, any, unknown, never), fixed (u8…i32), int64,
+                      -- boundary (bytes, utf8), native (null, func, userdata, instanceOf,
+                      -- cdata, notNullPtr), array, object, tuple, record, union, lazy, coerce
   compile/
+    context.lua       -- contexte de _parse (ctx:addIssue)
     codegen.lua       -- _test via load()
     closures.lua      -- _test fallback + _check
     parse.lua         -- _parse (copie, transform, default, strip)
-  errors.lua          -- format, flatten, formatage lisible, i18n
-  util/compat.lua     -- 5.1/5.2/5.3/5.4/JIT (math.type, load, unpack, int64)
-types/                -- annotations LuaCATS (*.d.lua)
-tests/  bench/  docs/fr  docs/en  build.lua  dist/
+  util/compat.lua     -- 5.1/5.2/5.3/5.4/JIT (math.type, load, unpack, int64, UTF-8)
+types/                -- annotations LuaCATS (zigo.d.lua)
+docs/                 -- DESIGN.md, en/guide.md, fr/guide.md
+tests/  bench/  build.lua  dist/
 ```
 
 ---
@@ -105,7 +111,6 @@ local z = require("zigo")
 local User = z.object({
     id      = z.int64(),                         -- number entier ≤ 2^53, cdata int64 (LuaJIT)
     name    = z.utf8():min(3):max(32),           -- longueur en caractères, UTF-8 vérifié
-    email   = z.string():email(),
     age     = z.integer():between(0, 150):optional(),
     role    = z.enum({ "admin", "user", "guest" }),
     tags    = z.array(z.string():max(16)):max(10):default({}),
@@ -124,8 +129,9 @@ local bool          = User:is(input)          -- _test seul, aucune allocation
 
 ### Primitives et modificateurs
 `string`, `utf8`, `bytes`, `number`, `integer`, `int64`, `boolean`, `func`, `literal`, `enum`, `any`, `unknown`, `never`, `null(sentinel)`
-`object`, `array`, `tuple`, `record(k, v)`, `union`, `discriminatedUnion(key, …)`, `intersection`, `lazy(fn)`
-`:optional()`, `:nullable()` (accepte la sentinelle NULL configurée), `:default(x | fn)`, `:refine(fn, opts)`, `:transform(fn)`, `:pipe(schema)`, `:describe(txt)`
+`object`, `array`, `tuple`, `record(k, v)`, `union`, `discriminatedUnion(key, …)`, `lazy(fn)`
+`:optional()`, `:nullable()` (accepte la sentinelle NULL configurée), `:default(x | fn)`, `:refine(fn, opts)`, `:transform(fn)`, `:pipe(schema)`
+Hors 1.0 : `z.string():email()`, `intersection` et `:describe(txt)` ne sont pas livrés.
 `z.coerce.integer()`, `z.coerce.number()`, `z.coerce.boolean()`, `z.coerce.string()`
 
 ### Objets : clés inconnues
@@ -157,7 +163,7 @@ Décision : **zigo est autonome, sans aucune dépendance**. Pas de variantes « 
 
 ### Interop matchigo
 `buildTest` de matchigo-lua lit `pat._test` avant tout le reste : **un nœud zigo qui expose `_test` est un pattern matchigo, sans dépendance**. `_test` est fourni via `__index` paresseux (compile au premier accès, puis `rawset`), pour que matchigo capture directement la fonction finale.
-⚠ À vérifier par un test d'intégration : le chemin `compile.lua` de matchigo (fast-path littéral, `P.select`) avec un nœud non-`P`.
+Vérifié par `tests/matchigo_test.lua`, joué en CI contre le vrai matchigo-lua (chargé depuis `MATCHIGO_PATH`, test sauté sans ce chemin) : `m.isMatching`, `m.compile` (fast-path littéral compris), `m.matcher():with` avec garde, `P.select` avec ou sans label, et un nœud zigo dans une shape, `P.intersection` ou `P.anyOf`. Deux points à retenir : `P.union` construit un ensemble de valeurs littérales, donc `P.union(z.string(), z.boolean())` ne correspond jamais et il faut `P.anyOf` pour combiner des schémas ; matchigo ne lit que le verdict de `_test`, donc avec un schéma impur le handler reçoit la valeur d'origine.
 
 ```lua
 m.matcher()
@@ -284,14 +290,14 @@ Scénarios :
 
 ## 9. Roadmap
 
-| Phase | Contenu | Sortie |
-|---|---|---|
-| P0 | nœuds immuables, primitives, `object`/`array`/`optional`, two-pass closures, format d'erreur, tests unitaires + déterminisme | `safeParse` fonctionnel |
-| P1 | codegen `_test` + fallback, test d'équivalence fuzz, bench S1–S4 + matrice | budgets §6 tenus |
-| P2 | `default`, `transform`, `refine`, `pipe`, `coerce`, `strip`, `_parse` | schémas impurs |
-| P3 | `union`, `discriminatedUnion`, `tuple`, `record`, `lazy`, limites réseau, S5–S9 | prêt pour le réseau |
-| P4 | types frontière : `int64`, `cdata`, `null(sentinel)`, `bytes`/`utf8`, entiers à taille fixe | le différenciateur |
-| P5 | LuaCATS `*.d.lua`, bundle, docs FR/EN, rockspec, interop matchigo documentée | release 1.0 |
+| Phase | Contenu | Sortie | État |
+|---|---|---|---|
+| P0 | nœuds immuables, primitives, `object`/`array`/`optional`, two-pass closures, format d'erreur, tests unitaires + déterminisme | `safeParse` fonctionnel | livrée |
+| P1 | codegen `_test` + fallback, test d'équivalence fuzz, bench S1–S4 + matrice | budgets §6 tenus | livrée |
+| P2 | `default`, `transform`, `refine`, `pipe`, `coerce`, `strip`, `_parse` | schémas impurs | livrée |
+| P3 | `union`, `discriminatedUnion`, `tuple`, `record`, `lazy`, limites réseau, S5–S9 | prêt pour le réseau | livrée |
+| P4 | types frontière : `int64`, `cdata`, `null(sentinel)`, `bytes`/`utf8`, entiers à taille fixe | le différenciateur | livrée |
+| P5 | LuaCATS `*.d.lua`, bundle, docs FR/EN, rockspec, interop matchigo documentée | release 1.0 | livrée (1.0.0, 2026-11-09) |
 
 ---
 
@@ -299,7 +305,7 @@ Scénarios :
 
 - [x] Nom : `zigo` (décidé le 2026-11-08, remplace validigo)
 - [x] Namespace : `z` (décidé le 2026-11-08, clin d'œil à Zod ; une lettre par lib, `m`/`P` pour matchigo)
-- [ ] Vérifier la disponibilité de `zigo` sur LuaRocks avant de réserver
+- [x] Nom `zigo` libre sur LuaRocks (vérifié le 2026-11-09)
 - [x] Défaut des clés inconnues : `passthrough`, `:strict()` à la demande (2026-11-08)
 - [x] `integer()` accepte `3.0` en 5.3+ par défaut, `{ strict = true }` pour refuser (2026-11-08)
 - [x] Messages d'erreur : codes stables + anglais intégré, table de messages remplaçable (2026-11-08)

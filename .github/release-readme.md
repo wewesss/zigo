@@ -1,7 +1,6 @@
 # zigo — release bundle
 
-Zod-like data validator for Lua 5.1-5.4 and LuaJIT. Pre-alpha: this release
-is a skeleton, the schema API is not implemented yet.
+Zod-like data validator for Lua 5.1-5.4 and LuaJIT.
 
 ## What's in this archive
 
@@ -41,6 +40,8 @@ they contain definitions only, no runtime code.
 ## Documentation & sources
 
 - Repository: https://github.com/wewesss/zigo
+- Guide: `docs/en/guide.md` (English), `docs/fr/guide.md` (French) on the repo.
+- Changelog: `CHANGELOG.md` on the repo.
 - Design document: `docs/DESIGN.md` on the repo.
 
 ## License
