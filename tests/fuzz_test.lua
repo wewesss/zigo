@@ -181,7 +181,7 @@ return function(env)
         function() return -huge end, function() return nan end, function() return "" end,
         function() return "a" end, function() return "abc" end, function() return "abcdef" end,
         function() return print end, function() return io.stdout end,
-        function() return coroutine.create(print) end, function() return {} end,
+        function() return coroutine.create(function() end) end, function() return {} end,
         function() return { 1, 2, 3 } end, function() return { a = 1 } end,
         function() return { 1, nil, 3 } end, function() return { { a = "a" } } end,
     }
