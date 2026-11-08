@@ -84,7 +84,7 @@ local function config(opts)
 end
 
 local api = {
-    _VERSION = "0.0.0",
+    _VERSION = "1.0.0",
     string = primitives.string,
     number = primitives.number,
     integer = primitives.integer,
