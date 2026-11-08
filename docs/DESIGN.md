@@ -303,6 +303,7 @@ Scénarios :
 - [x] Messages d'erreur : codes stables + anglais intégré, table de messages remplaçable (2026-11-08)
 - [x] Budgets §6 : bloquants en local (`bench/budgets.lua`), informatifs en CI (2026-11-08)
 - [x] Schémas impurs (P2) : passe unique `_parse` (validation + sortie dans l'ordre de la chaîne), `default` rendu tel quel ou `fn()`, échec de transform via `ctx:addIssue`, `coerce` strict, `strip`/`strict` le dernier gagne, `_parse` en closures, S8 informatif (2026-11-08)
+- [x] P3 : `union` première variante gagnante + `invalid_union` (issues de chaque variante), `discriminatedUnion` par hachage sans repli + `invalid_union_discriminator`, `tuple` strict + `:rest()`, `record` trié dans `_check` seulement, limites `z.config` + `:limits()` actives par défaut (64 / 10000 / 100), `maxKeys` sur les tables déjà parcourues, `lazy` appelé via `K` et borné par `maxDepth` ; jalons P3a puis P3b (2026-11-08)
 - [ ] Compilation par paliers en v2 : seulement si S9 montre un vrai problème
 
 ---
