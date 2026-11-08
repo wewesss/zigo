@@ -12,6 +12,22 @@
 ---@field message? string
 ---@field unionErrors? zigo.Issue[][]
 
+---@class zigo.LimitsOptions
+---@field maxDepth? integer nesting levels of containers, default 64
+---@field maxKeys? integer keys of one iterated table, default 10000
+---@field maxErrors? integer issues kept in an error, default 100
+---@field abortEarly? boolean stop at the first issue, default false
+
+---@class zigo.ConfigOptions : zigo.LimitsOptions
+---@field codegen? boolean
+
+---@class zigo.Config
+---@field codegen boolean
+---@field maxDepth integer
+---@field maxKeys integer
+---@field maxErrors integer
+---@field abortEarly boolean
+
 ---@class zigo.Flattened
 ---@field formErrors string[]
 ---@field fieldErrors table<string, string[]>
@@ -70,6 +86,10 @@ function Node:refine(fn, opts) end
 ---@param schema zigo.Node
 ---@return zigo.Node
 function Node:pipe(schema) end
+
+---@param opts zigo.LimitsOptions overrides z.config for this schema and the schemas below it
+---@return zigo.Node
+function Node:limits(opts) end
 
 ---@param v any
 ---@return boolean
@@ -199,6 +219,10 @@ function zigo.tuple(items, opts) end
 ---@return zigo.Node
 function zigo.record(key, value) end
 
+---@param fn fun(): zigo.Node resolved on first use; the target must be a pure schema
+---@return zigo.Node
+function zigo.lazy(fn) end
+
 ---@param ... zigo.Node
 ---@return zigo.Node
 function zigo.union(...) end
@@ -207,6 +231,10 @@ function zigo.union(...) end
 ---@param ... zigo.ObjectNode objects whose field `key` is a plain literal
 ---@return zigo.Node
 function zigo.discriminatedUnion(key, ...) end
+
+---@param opts? zigo.ConfigOptions applies to schemas compiled afterwards
+---@return zigo.Config
+function zigo.config(opts) end
 
 ---@param x any
 ---@return boolean

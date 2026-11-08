@@ -54,6 +54,12 @@ M.messages = {
     invalid_union_discriminator = function(i)
         return "Expected discriminator one of: " .. fmtValue(i.expected) .. ", got " .. fmtValue(i.got)
     end,
+    too_deep = function(i)
+        return "Nesting deeper than " .. tostring(i.expected) .. " levels"
+    end,
+    too_many_keys = function(i)
+        return "Expected at most " .. tostring(i.expected) .. " keys"
+    end,
     custom = function()
         return "Invalid input"
     end,

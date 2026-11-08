@@ -9,6 +9,9 @@ return function(env)
     local INPUTS = 8
     local MAX_DEPTH = 3
 
+    local LIMITS_SEED = 20261110
+    local LIMITS_SCHEMAS = 1500
+
     local huge = math.huge
     local nan = 0 / 0
     local unpack = table.unpack or unpack
@@ -171,6 +174,8 @@ return function(env)
                 end
                 spec.variants[i] = variant
             end
+        elseif depth < MAX_DEPTH and roll <= 58 then
+            spec = { kind = "lazy", target = genSpec(depth + 1) }
         else
             spec = leafSpec(pick(leafKinds))
         end
@@ -203,6 +208,9 @@ return function(env)
         end
         if spec.kind == "record" then
             out = out .. " (" .. describe(spec.key) .. " => " .. describe(spec.value) .. ")"
+        end
+        if spec.kind == "lazy" then
+            out = out .. " lazy (" .. describe(spec.target) .. ")"
         end
         if spec.kind == "union" or spec.kind == "dunion" then
             local variants = {}
@@ -260,6 +268,8 @@ return function(env)
         return n
     end
 
+    local forcers = {}
+
     local function build(spec)
         local kind, n = spec.kind, nil
         if kind == "string" then n = z.string()
@@ -285,6 +295,14 @@ return function(env)
             if spec.rest then n = n:rest(build(spec.rest)) end
         elseif kind == "record" then
             n = z.record(build(spec.key), build(spec.value))
+        elseif kind == "lazy" then
+            local target = build(spec.target)
+            forcers[#forcers + 1] = function()
+                local _ = target._test
+                _ = target._testD
+                _ = target._check
+            end
+            n = z.lazy(function() return target end)
         elseif kind == "union" or kind == "dunion" then
             local variants = {}
             for i, variant in ipairs(spec.variants) do variants[i] = build(variant) end
@@ -428,6 +446,8 @@ return function(env)
                 if k ~= nil and k == k then t[k] = junk() end
             end
             return t
+        elseif kind == "lazy" then
+            return genValid(spec.target)
         elseif kind == "union" then
             if chance(10) then return junk() end
             return genValid(pick(spec.variants))
@@ -482,14 +502,22 @@ return function(env)
         return junk()
     end
 
+    local function force()
+        for i = 1, #forcers do forcers[i]() end
+        forcers = {}
+    end
+
     local function compileBoth(spec)
         local previous = z.config().codegen
         z.config({ codegen = true })
+        forcers = {}
         local generated = build(spec)
         local gTest = generated._test
+        force()
         z.config({ codegen = false })
         local reference = build(spec)
         local cTest, cCheck = reference._test, reference._check
+        force()
         z.config({ codegen = previous })
         return gTest, cTest, cCheck
     end
@@ -541,6 +569,64 @@ return function(env)
         assertEq(cases, SCHEMAS * INPUTS)
         assertTrue(accepted >= SCHEMAS)
         assertTrue(rejected >= SCHEMAS)
+    end)
+
+    local function signature(issue)
+        local parts = {}
+        for i = 1, #issue.path do parts[i] = tostring(issue.path[i]) end
+        return table.concat(parts, "\1") .. "\2" .. issue.code
+    end
+
+    test("fuzz: tight limits agree between codegen, closures and _check, and maxErrors keeps a prefix", function()
+        reseed(LIMITS_SEED)
+        local before = z.config()
+        local cases, rejected, capped = 0, 0, 0
+        local ok, err = pcall(function()
+            for s = 1, LIMITS_SCHEMAS do
+                local spec = genSpec(0)
+                z.config({ maxKeys = pick({ 1, 2, 3, 4, 10000 }), maxDepth = pick({ 1, 2, 3, 4, 64 }) })
+                local gTest, cTest, cCheck = compileBoth(spec)
+                if not z._isGenerated(gTest) then
+                    error(("schema #%d fell back to closures: %s"):format(s, describe(spec)), 0)
+                end
+                for j = 1, INPUTS do
+                    local data = genInput(spec)
+                    local okG, g, okC, c, okK, k = verdicts(gTest, cTest, cCheck, data)
+                    cases = cases + 1
+                    if okG ~= okC or okC ~= okK or (okG and (g ~= c or c ~= k)) then
+                        error(("limits mismatch on schema #%d input #%d\nschema: %s\ndata: %s\ncodegen=%s(%s) closures=%s(%s) check-clean=%s(%s)")
+                            :format(s, j, describe(spec), show(data), tostring(g), tostring(okG),
+                                tostring(c), tostring(okC), tostring(k), tostring(okK)), 0)
+                    end
+                    if okG and not g then rejected = rejected + 1 end
+                    local okF, all = pcall(cCheck, data, {}, 0, nil)
+                    local okP, few = pcall(cCheck, data, { cap = 3 }, 0, nil)
+                    if okF and okP then
+                        if (all == nil) ~= (few == nil) or (few and #few > 3) then
+                            error(("maxErrors disagrees on schema #%d input #%d\nschema: %s\ndata: %s")
+                                :format(s, j, describe(spec), show(data)), 0)
+                        end
+                        if few then
+                            capped = capped + 1
+                            for i = 1, #few do
+                                if signature(few[i]) ~= signature(all[i]) then
+                                    error(("maxErrors is not a prefix on schema #%d input #%d\nschema: %s\ndata: %s")
+                                        :format(s, j, describe(spec), show(data)), 0)
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end)
+        z.config({
+            maxKeys = before.maxKeys, maxDepth = before.maxDepth,
+            maxErrors = before.maxErrors, abortEarly = before.abortEarly,
+        })
+        if not ok then error(err, 0) end
+        print(("fuzz limits: %d cases, %d rejected, %d with issues"):format(cases, rejected, capped))
+        assertEq(cases, LIMITS_SCHEMAS * INPUTS)
+        assertTrue(rejected >= LIMITS_SCHEMAS)
     end)
 
     local function decorate(spec)
@@ -613,7 +699,7 @@ return function(env)
         return not childrenPure(spec)
     end
 
-    local newKinds = { tuple = true, record = true, union = true, dunion = true }
+    local newKinds = { tuple = true, record = true, union = true, dunion = true, lazy = true }
 
     local function independent(spec)
         if newKinds[spec.kind] then return true end
@@ -798,9 +884,13 @@ return function(env)
         return false
     end
 
+    local function oracleLazy(spec, v)
+        return oracle(spec.target, v)
+    end
+
     local structuredOracles = {
         object = oracleObject, array = oracleArray, tuple = oracleTuple, record = oracleRecord,
-        union = oracleUnion, dunion = oracleDunion,
+        union = oracleUnion, dunion = oracleDunion, lazy = oracleLazy,
     }
 
     local function oracleBase(spec, v)

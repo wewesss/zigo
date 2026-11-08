@@ -6,6 +6,7 @@ local ENTRY = "zigo/init.lua"
 local MODULES = {
     { req = "zigo.util.compat", file = "zigo/util/compat.lua", var = "_M_compat" },
     { req = "zigo.errors", file = "zigo/errors.lua", var = "_M_errors" },
+    { req = "zigo.limits", file = "zigo/limits.lua", var = "_M_limits" },
     { req = "zigo.compile.context", file = "zigo/compile/context.lua", var = "_M_context" },
     { req = "zigo.node", file = "zigo/node.lua", var = "_M_node" },
     { req = "zigo.compile.closures", file = "zigo/compile/closures.lua", var = "_M_closures" },
@@ -18,6 +19,7 @@ local MODULES = {
     { req = "zigo.types.tuple", file = "zigo/types/tuple.lua", var = "_M_tuple" },
     { req = "zigo.types.record", file = "zigo/types/record.lua", var = "_M_record" },
     { req = "zigo.types.union", file = "zigo/types/union.lua", var = "_M_union" },
+    { req = "zigo.types.lazy", file = "zigo/types/lazy.lua", var = "_M_lazy" },
 }
 
 local reqToVar = {}

@@ -30,6 +30,7 @@ build = {
         ["zigo"]             = "zigo/init.lua",
         ["zigo.util.compat"] = "zigo/util/compat.lua",
         ["zigo.errors"]               = "zigo/errors.lua",
+        ["zigo.limits"]               = "zigo/limits.lua",
         ["zigo.compile.context"]      = "zigo/compile/context.lua",
         ["zigo.node"]                 = "zigo/node.lua",
         ["zigo.compile.closures"]     = "zigo/compile/closures.lua",
@@ -42,6 +43,7 @@ build = {
         ["zigo.types.tuple"]          = "zigo/types/tuple.lua",
         ["zigo.types.record"]         = "zigo/types/record.lua",
         ["zigo.types.union"]          = "zigo/types/union.lua",
+        ["zigo.types.lazy"]           = "zigo/types/lazy.lua",
     },
     copy_directories = { "docs", "types" },
 }

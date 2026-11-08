@@ -88,6 +88,8 @@ dofile("tests/coerce_test.lua")(env)
 dofile("tests/union_test.lua")(env)
 dofile("tests/tuple_test.lua")(env)
 dofile("tests/record_test.lua")(env)
+dofile("tests/limits_test.lua")(env)
+dofile("tests/lazy_test.lua")(env)
 dofile("tests/fuzz_test.lua")(env)
 dofile("tests/alloc_test.lua")(env)
 

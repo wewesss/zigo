@@ -91,6 +91,35 @@ return function(env)
         assertTrue(bytesPerCall(function(v) return Container:safeParse(v) end, value) < BUDGET)
     end)
 
+    test("zero allocation: a recursive lazy schema on the valid path", function()
+        local Tree
+        Tree = z.object({
+            value = z.integer(),
+            children = z.array(z.lazy(function() return Tree end)):optional(),
+        })
+        local value = { value = 1, children = { { value = 2 }, { value = 3, children = { { value = 4 } } } } }
+        assertTrue(Tree:is(value))
+        assertTrue(bytesPerCall(Tree._test, value) < BUDGET)
+        assertTrue(bytesPerCall(function(v) return Tree:safeParse(v) end, value) < BUDGET)
+    end)
+
+    test("abortEarly: the invalid path allocates at most one error table", function()
+        local Rows = z.array(z.object({ id = z.integer(), name = z.string() }))
+        local Abort = Rows:limits({ abortEarly = true })
+        local oneBad = { { id = "x", name = 1 } }
+        local manyBad = {}
+        for i = 1, 1000 do manyBad[i] = { id = "x", name = 1 } end
+        local _, _, err = Abort:safeParse(manyBad)
+        assertEq(#err.issues, 1)
+        local _, _, capped = Rows:safeParse(manyBad)
+        assertEq(#capped.issues, 100)
+        local one = bytesPerCall(function(v) return Abort:safeParse(v) end, oneBad)
+        local many = bytesPerCall(function(v) return Abort:safeParse(v) end, manyBad)
+        local unbounded = bytesPerCall(function(v) return Rows:safeParse(v) end, manyBad)
+        assertTrue(many <= one * 1.05)
+        assertTrue(unbounded > many * 10)
+    end)
+
     test("the invalid path does allocate (sanity check of the probe)", function()
         local bad = { id = "x" }
         local per = bytesPerCall(function(v) return Schema:safeParse(v) end, bad)
