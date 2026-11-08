@@ -12,7 +12,7 @@ local gotValue, copyList, keyRank = closures.gotValue, closures.copyList, closur
 local collectKeys, reportExotic, emitUnion = closures.collectKeys, closures.reportExotic, closures.emitUnion
 local full = closures.full
 local sub = node.sub
-local type, next, rawget, tostring, tonumber = type, next, rawget, tostring, tonumber
+local type, next, rawget, rawequal, tostring, tonumber = type, next, rawget, rawequal, tostring, tonumber
 local find = string.find
 local huge = math.huge
 
@@ -24,6 +24,7 @@ local coercers = {}
 local TWIN_DROP = {
     optional = true, chain = true, hasDefault = true, default = true,
     nilKind = true, nilAt = true, coerce = true, strip = true,
+    nullable = true, nullValue = true, nullAt = true,
 }
 
 local function fail(ctx, depth, code, expected, got, typ)
@@ -492,7 +493,7 @@ function M.build(self, lim)
     for i = 1, count do steps[i] = buildStep(chain[i], lim) end
     local nilKind, nilAt, default = d.nilKind, d.nilAt, d.default
     local defaultIsFunction = type(default) == "function"
-    return function(v, ctx, depth)
+    local run = function(v, ctx, depth)
         local x, ok, first
         if v == nil and nilKind then
             first = nilAt + 1
@@ -505,6 +506,17 @@ function M.build(self, lim)
             first = 1
         end
         for i = first, count do
+            ok, x = steps[i](x, ctx, depth)
+            if not ok then return false end
+        end
+        return true, x
+    end
+    if not d.nullable then return run end
+    local nullValue, nullAt = d.nullValue, d.nullAt
+    return function(v, ctx, depth)
+        if not rawequal(v, nullValue) then return run(v, ctx, depth) end
+        local x, ok = v, nil
+        for i = nullAt + 1, count do
             ok, x = steps[i](x, ctx, depth)
             if not ok then return false end
         end

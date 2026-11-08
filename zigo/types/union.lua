@@ -37,13 +37,13 @@ local function discriminantOf(variant, key, position)
         error("zigo: discriminatedUnion() variant " .. position .. " is not an object schema", 3)
     end
     local d = variant.d
-    if d.optional or d.hasDefault then
-        error("zigo: discriminatedUnion() variant " .. position .. " must not be optional or have a default", 3)
+    if d.optional or d.nullable or d.hasDefault then
+        error("zigo: discriminatedUnion() variant " .. position .. " must not be optional, nullable or have a default", 3)
     end
     for i = 1, #d.keys do
         if d.keys[i] == key then
             local child = d.children[i]
-            if child.kind ~= "literal" or not child.pure or child.d.optional then
+            if child.kind ~= "literal" or not child.pure or child.d.optional or child.d.nullable then
                 error("zigo: discriminatedUnion() variant " .. position .. " must have a plain literal at '" .. key .. "'", 3)
             end
             return child.d.value

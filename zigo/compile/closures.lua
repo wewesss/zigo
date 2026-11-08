@@ -1,12 +1,17 @@
 local compat = require("zigo.util.compat")
 local nodeLib = require("zigo.node")
+local nulls = require("zigo.null")
 
 local mathType = compat.mathType
 local isInt64, utf8Length = compat.isInt64, compat.utf8Length
 local rawlen = compat.rawlen
 local huge = math.huge
-local type, next, rawget = type, next, rawget
+local type, next, rawget, rawequal, getmetatable, tostring, pcall, error =
+    type, next, rawget, rawequal, getmetatable, tostring, pcall, error
+local find = string.find
 local sort = table.sort
+local ffi, istype = compat.ffi, compat.istype
+local isNull = nulls.isKnown
 local sub = nodeLib.sub
 
 local M = {}
@@ -20,6 +25,8 @@ local function describe(v)
         if v ~= v then return "nan" end
         if v == huge then return "inf" end
         if v == -huge then return "-inf" end
+    elseif (t == "table" or t == "userdata" or t == "cdata") and isNull(v) then
+        return "null"
     end
     return t
 end
@@ -31,6 +38,7 @@ local function gotValue(v)
         if v ~= v then return "nan" end
         return v
     end
+    if (t == "table" or t == "userdata" or t == "cdata") and isNull(v) then return "null" end
     return t
 end
 
@@ -390,14 +398,167 @@ end
 
 testBuilders.literal = function(d)
     local value = d.value
+    if ffi then
+        return function(v) return rawequal(v, value) end
+    end
     return function(v) return v == value end
 end
 
 checkBuilders.literal = function(d)
     local value = d.value
+    local same = testBuilders.literal(d)
     return function(v, path, depth, errs)
-        if v ~= value then
+        if not same(v) then
             return emit(errs, path, depth, "invalid_literal", value, gotValue(v))
+        end
+        return errs
+    end
+end
+
+local function neverTest()
+    return false
+end
+
+testBuilders.null = function(d)
+    local s = d.value
+    return function(v) return rawequal(v, s) end
+end
+
+checkBuilders.null = function(d)
+    local s = d.value
+    return function(v, path, depth, errs)
+        if not rawequal(v, s) then
+            local got = describe(v)
+            if got == "null" then got = "other null" end
+            return emit(errs, path, depth, "invalid_type", "null", got)
+        end
+        return errs
+    end
+end
+
+testBuilders.func = function()
+    return function(v) return type(v) == "function" end
+end
+
+checkBuilders.func = function()
+    return function(v, path, depth, errs)
+        if type(v) ~= "function" then
+            return emit(errs, path, depth, "invalid_type", "function", describe(v))
+        end
+        return errs
+    end
+end
+
+testBuilders.userdata = function(d)
+    local mt = d.mt
+    if mt == nil then
+        return function(v) return type(v) == "userdata" end
+    end
+    return function(v)
+        return type(v) == "userdata" and rawequal(getmetatable(v), mt)
+    end
+end
+
+checkBuilders.userdata = function(d)
+    local test = testBuilders.userdata(d)
+    local expected = d.mt == nil and "userdata" or "userdata with the given metatable"
+    return function(v, path, depth, errs)
+        if not test(v) then
+            return emit(errs, path, depth, "invalid_type", expected, describe(v))
+        end
+        return errs
+    end
+end
+
+testBuilders.instanceOf = function(d)
+    local mt = d.mt
+    return function(v)
+        local t = type(v)
+        return (t == "table" or t == "userdata") and rawequal(getmetatable(v), mt)
+    end
+end
+
+checkBuilders.instanceOf = function(d)
+    local test = testBuilders.instanceOf(d)
+    return function(v, path, depth, errs)
+        if not test(v) then
+            return emit(errs, path, depth, "invalid_type", "instance of the given metatable", describe(v))
+        end
+        return errs
+    end
+end
+
+local function resolveCtype(d)
+    local ct = d.resolved
+    if ct ~= nil then return ct end
+    local ok, res = pcall(ffi.typeof, d.ctype)
+    if not ok then
+        error("zigo: cannot resolve the C type '" .. d.name .. "': " .. tostring(res), 0)
+    end
+    d.resolved = res
+    return res
+end
+
+testBuilders.cdata = function(d)
+    if not istype then return neverTest end
+    return function(v)
+        return istype(d.resolved or resolveCtype(d), v)
+    end
+end
+
+checkBuilders.cdata = function(d)
+    local test = testBuilders.cdata(d)
+    local name = d.name
+    return function(v, path, depth, errs)
+        if not test(v) then
+            return emit(errs, path, depth, "invalid_type", name, describe(v))
+        end
+        return errs
+    end
+end
+
+local voidPtr = ffi and ffi.typeof("void *")
+local typeofFn, castFn = ffi and ffi.typeof, ffi and ffi.cast
+
+local function pointerName(name)
+    return find(name, "%*%s*[%a ]*>$") ~= nil or find(name, "%(%*%)") ~= nil
+end
+
+local function isPointer(v)
+    if type(v) ~= "cdata" then return false end
+    return pointerName(tostring(typeofFn(v)))
+end
+
+local function isNullPointer(v)
+    return castFn(voidPtr, v) == nil
+end
+
+local function resolvePointerType(d)
+    local ct = d.resolved
+    if ct ~= nil then return ct end
+    ct = resolveCtype(d)
+    if not pointerName(tostring(ct)) then
+        d.resolved = nil
+        error("zigo: notNullPtr() expects a pointer type, got '" .. d.name .. "'", 0)
+    end
+    return ct
+end
+
+testBuilders.notNullPtr = function(d)
+    if not istype then return neverTest end
+    return function(v)
+        return istype(d.resolved or resolvePointerType(d), v) and v ~= nil
+    end
+end
+
+checkBuilders.notNullPtr = function(d)
+    local test = testBuilders.notNullPtr(d)
+    local expected = "non-null " .. d.name
+    return function(v, path, depth, errs)
+        if not test(v) then
+            local got = describe(v)
+            if istype and isPointer(v) and isNullPointer(v) then got = "NULL" end
+            return emit(errs, path, depth, "invalid_type", expected, got)
         end
         return errs
     end
@@ -878,6 +1039,7 @@ checkBuilders.record = function(d, lim)
 end
 
 M.fixedInts = fixedInts
+M.testBuilders = testBuilders
 M.fixedBounds = fixedBounds
 M.utf8Within = utf8Within
 M.emit = emit
@@ -903,12 +1065,38 @@ function M.lazyTest(d, lim, dyn)
     return testBuilders.lazy(d, lim, dyn)
 end
 
+local pointerKinds = { cdata = true, notNullPtr = true }
+
 function M.test(nd, lim, dyn)
     local build = testBuilders[nd.kind]
     if not build then error("zigo: no test compiler for kind '" .. tostring(nd.kind) .. "'", 2) end
     lim = lim or nd._limits
     local fn = build(nd.d, lim, dyn)
-    if nd.d.optional then
+    local d = nd.d
+    local optional = d.optional
+    if optional and ffi and pointerKinds[nd.kind] then
+        optional = false
+        local base = fn
+        if dyn then
+            fn = function(v, D) return rawequal(v, nil) or base(v, D) end
+        else
+            fn = function(v) return rawequal(v, nil) or base(v) end
+        end
+    end
+    if d.nullable then
+        local inner, s = fn, d.nullValue
+        if optional then
+            if dyn then
+                return function(v, D) return v == nil or rawequal(v, s) or inner(v, D) end
+            end
+            return function(v) return v == nil or rawequal(v, s) or inner(v) end
+        end
+        if dyn then
+            return function(v, D) return rawequal(v, s) or inner(v, D) end
+        end
+        return function(v) return rawequal(v, s) or inner(v) end
+    end
+    if optional then
         local inner = fn
         if dyn then
             return function(v, D) return v == nil or inner(v, D) end
@@ -923,7 +1111,24 @@ function M.check(nd, lim)
     if not build then error("zigo: no check compiler for kind '" .. tostring(nd.kind) .. "'", 2) end
     lim = lim or nd._limits
     local fn = build(nd.d, lim)
-    if nd.d.optional then
+    local d = nd.d
+    local optional = d.optional
+    if optional and ffi and pointerKinds[nd.kind] then
+        optional = false
+        local base = fn
+        fn = function(v, path, depth, errs)
+            if rawequal(v, nil) then return errs end
+            return base(v, path, depth, errs)
+        end
+    end
+    if d.nullable then
+        local inner, s = fn, d.nullValue
+        return function(v, path, depth, errs)
+            if rawequal(v, s) or (optional and v == nil) then return errs end
+            return inner(v, path, depth, errs)
+        end
+    end
+    if optional then
         local inner = fn
         return function(v, path, depth, errs)
             if v == nil then return errs end

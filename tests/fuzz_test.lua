@@ -113,11 +113,88 @@ return function(env)
         return mods
     end
 
+    local SENT_T = setmetatable({}, { __tostring = function() return "fuzz-null" end })
+    local sentinelPool = { SENT_T, io.stdin }
+    local sentinelNames = { [SENT_T] = "T", [io.stdin] = "stdin" }
+    local ClassA = { __index = {} }
+    local ClassB = { __index = {} }
+    local fileMt = getmetatable(io.stdout)
+    local userdataValues = { io.stdout, io.stderr }
+    local mtPool = { ClassA, ClassB, fileMt }
+    local mtNames = { [ClassA] = "A", [ClassB] = "B", [fileMt] = "file" }
+    local proxyValue, proxyMt
+    if newproxy then
+        proxyValue = newproxy(true)
+        proxyMt = getmetatable(proxyValue)
+        userdataValues[#userdataValues + 1] = proxyValue
+        mtPool[#mtPool + 1] = proxyMt
+        mtNames[proxyMt] = "proxy"
+    end
+    local functionValues = { print, function() end, string.format }
+
+    local function instanceFor(mt)
+        if mt == fileMt then return io.stdout end
+        if mt == proxyMt then return proxyValue end
+        return setmetatable({}, mt)
+    end
+
+    local cdataInfo = setmetatable({}, { __mode = "k" })
+    local cdataCtypes = { "int64_t" }
+    local pointerCtypes = { "void *" }
+    local cdataMakers, nullMakers = {}, {}
+    if ffi then
+        ffi.cdef([[
+            typedef struct zigo_fz_point { int x; } zigo_fz_point;
+            typedef struct zigo_fz_other { int a; } zigo_fz_other;
+        ]])
+        cdataCtypes = {
+            "int64_t", "uint64_t", "int32_t", "double", "void *", "int *", "zigo_fz_point *", "zigo_fz_point",
+            "zigo_fz_other *",
+        }
+        pointerCtypes = { "void *", "int *", "zigo_fz_point *", "zigo_fz_other *" }
+        local backing = ffi.new("zigo_fz_point[2]")
+        local function register(v, ptr, null)
+            cdataInfo[v] = { ptr = ptr, null = null }
+            return v
+        end
+        cdataMakers = {
+            function() return register(ffi.new("int64_t", rand(3) - 1), false) end,
+            function() return register(ffi.new("uint64_t", rand(3) - 1), false) end,
+            function() return register(ffi.new("int32_t", rand(3) - 1), false) end,
+            function() return register(ffi.new("double", rand(3) - 1), false) end,
+            function() return register(loader("return 1LL")(), false) end,
+            function() return register(ffi.new("zigo_fz_point"), false) end,
+            function() return register(ffi.new("zigo_fz_other"), false) end,
+            function() return register(ffi.cast("void *", backing), true, false) end,
+            function() return register(ffi.cast("int *", backing), true, false) end,
+            function() return register(ffi.cast("zigo_fz_point *", backing), true, false) end,
+            function() return register(ffi.cast("zigo_fz_other *", backing), true, false) end,
+        }
+        nullMakers = {
+            function() return register(ffi.cast("void *", 0), true, true) end,
+            function() return register(ffi.cast("int *", 0), true, true) end,
+            function() return register(ffi.cast("zigo_fz_point *", 0), true, true) end,
+            function() return register(ffi.cast("zigo_fz_other *", 0), true, true) end,
+        }
+    end
+
     local leafKinds = {
         "string", "string", "string", "number", "number", "integer", "integer", "integer",
         "boolean", "boolean", "literal", "literal", "enum", "enum", "any", "unknown", "never",
         "u8", "u16", "u32", "i8", "i16", "i32", "int64", "int64", "bytes", "utf8", "utf8",
     }
+    for _, k in ipairs({ "null", "null", "func", "userdata", "userdata", "instanceOf", "instanceOf" }) do
+        leafKinds[#leafKinds + 1] = k
+    end
+    if ffi then
+        for _, k in ipairs({ "cdata", "cdata", "notNullPtr", "notNullPtr" }) do leafKinds[#leafKinds + 1] = k end
+    end
+    local p4bSet = { null = true, func = true, userdata = true, instanceOf = true, cdata = true, notNullPtr = true }
+    local p4bKinds = { "literal", "null", "func", "userdata", "instanceOf" }
+    if ffi then
+        p4bKinds[#p4bKinds + 1] = "cdata"
+        p4bKinds[#p4bKinds + 1] = "notNullPtr"
+    end
 
     local function leafSpec(kind)
         local spec = { kind = kind }
@@ -144,6 +221,16 @@ return function(env)
                 elseif t == 3 then spec.values[i] = pick(numPool)
                 else spec.values[i] = chance(50) end
             end
+        elseif kind == "null" then
+            spec.sentinel = pick(sentinelPool)
+        elseif kind == "userdata" then
+            if chance(70) then spec.mt = pick(mtPool) end
+        elseif kind == "instanceOf" then
+            spec.mt = pick(mtPool)
+        elseif kind == "cdata" then
+            spec.ctype = pick(cdataCtypes)
+        elseif kind == "notNullPtr" then
+            spec.ctype = pick(pointerCtypes)
         end
         return spec
     end
@@ -206,6 +293,9 @@ return function(env)
             spec = leafSpec(pick(leafKinds))
         end
         if spec.optional == nil then spec.optional = chance(22) end
+        if spec.nullable == nil then
+            spec.nullable = chance(14) and { at = 0, sentinel = pick(sentinelPool) } or false
+        end
         return spec
     end
 
@@ -224,6 +314,12 @@ return function(env)
             parts[#parts + 1] = "default@" .. spec.default.at .. "=" .. show(spec.default.value)
         end
         if spec.optional then parts[#parts + 1] = "optional" end
+        if spec.sentinel ~= nil then parts[#parts + 1] = "sentinel=" .. sentinelNames[spec.sentinel] end
+        if spec.mt ~= nil then parts[#parts + 1] = "mt=" .. mtNames[spec.mt] end
+        if spec.ctype ~= nil then parts[#parts + 1] = "ctype=" .. spec.ctype end
+        if spec.nullable then
+            parts[#parts + 1] = "nullable@" .. spec.nullable.at .. "=" .. sentinelNames[spec.nullable.sentinel]
+        end
         local out = table.concat(parts, " ")
         if spec.kind == "array" then out = out .. " of (" .. describe(spec.item) .. ")" end
         if spec.kind == "tuple" then
@@ -282,6 +378,7 @@ return function(env)
         local default = spec.default
         for i = 0, #chain do
             if default and default.at == i then n = n:default(default.value) end
+            if spec.nullable and spec.nullable.at == i then n = n:nullable(spec.nullable.sentinel) end
             local step = chain[i + 1]
             if step then
                 if step.op == "transform" then
@@ -311,6 +408,12 @@ return function(env)
         elseif kind == "any" then n = z.any()
         elseif kind == "unknown" then n = z.unknown()
         elseif kind == "never" then n = z.never()
+        elseif kind == "null" then n = z.null(spec.sentinel)
+        elseif kind == "func" then n = z.func()
+        elseif kind == "userdata" then n = z.userdata(spec.mt)
+        elseif kind == "instanceOf" then n = z.instanceOf(spec.mt)
+        elseif kind == "cdata" then n = z.cdata(spec.ctype)
+        elseif kind == "notNullPtr" then n = z.notNullPtr(spec.ctype)
         elseif kind == "array" then n = z.array(build(spec.item), spec.meta and { meta = true } or nil)
         elseif kind == "object" then
             local shape = {}
@@ -359,8 +462,29 @@ return function(env)
         function() return coroutine.create(function() end) end, function() return {} end,
         function() return { 1, 2, 3 } end, function() return { a = 1 } end,
         function() return { 1, nil, 3 } end, function() return { { a = "a" } } end,
+        function() return SENT_T end, function() return io.stdin end, function() return io.stderr end,
+        function() return function() end end, function() return instanceFor(ClassA) end,
+        function() return instanceFor(ClassB) end,
     }
+    for i = 1, #cdataMakers do junkMakers[#junkMakers + 1] = cdataMakers[i] end
     local function junk() return pick(junkMakers)() end
+
+    local function genP4b(spec)
+        local kind = spec.kind
+        if chance(10) then return junk() end
+        if kind == "null" then
+            if chance(85) then return spec.sentinel end
+            return pick(sentinelPool)
+        elseif kind == "func" then
+            return pick(functionValues)
+        elseif kind == "userdata" then
+            return pick(userdataValues)
+        elseif kind == "instanceOf" then
+            if chance(75) then return instanceFor(spec.mt) end
+            return instanceFor(pick(mtPool))
+        end
+        return pick(cdataMakers)()
+    end
 
     local codePoints = {
         0, 0x41, 0x7F, 0x80, 0xE9, 0x7FF, 0x800, 0x20AC, 0xD7FF, 0xE000, 0xFFFD, 0xFFFF, 0x10000, 0x1F600, 0x10FFFF,
@@ -487,7 +611,9 @@ return function(env)
     local genValid
     genValid = function(spec)
         if (spec.optional or spec.default) and chance(25) then return nil end
+        if spec.nullable and chance(18) then return spec.nullable.sentinel end
         local kind = spec.kind
+        if p4bSet[kind] then return genP4b(spec) end
         if p4aSet[kind] then
             if kind == "int64" then
                 if chance(15) then return junk() end
@@ -819,6 +945,7 @@ return function(env)
                 end
             end
             if #steps > 0 then spec.chain = steps end
+            if spec.nullable then spec.nullable.at = rand(#steps + 1) - 1 end
             if chance(50) and not spec.variant then
                 spec.default = { at = rand(#steps + 1) - 1, value = pick(defaultValues) }
                 if chance(70) then spec.optional = false end
@@ -864,11 +991,14 @@ return function(env)
         return not childrenPure(spec)
     end
 
-    local newKinds = { tuple = true, record = true, union = true, dunion = true, lazy = true }
+    local newKinds = {
+        tuple = true, record = true, union = true, dunion = true, lazy = true, literal = true,
+    }
     for _, k in ipairs(p4aKinds) do newKinds[k] = true end
+    for k in pairs(p4bSet) do newKinds[k] = true end
 
     local function independent(spec)
-        if newKinds[spec.kind] then return true end
+        if spec.nullable or newKinds[spec.kind] then return true end
         if spec.kind == "object" then
             for _, f in ipairs(spec.fields) do
                 if independent(f.spec) then return true end
@@ -882,7 +1012,7 @@ return function(env)
     local function baseOnly(spec)
         local copy = {}
         for k, v in pairs(spec) do copy[k] = v end
-        copy.chain, copy.default, copy.optional, copy.strip = nil, nil, nil, nil
+        copy.chain, copy.default, copy.optional, copy.strip, copy.nullable = nil, nil, nil, nil, nil
         return copy
     end
 
@@ -1045,7 +1175,8 @@ return function(env)
         local x
         if viaIndex then x = v[spec.key] else x = rawget(v, spec.key) end
         for _, variant in ipairs(spec.variants) do
-            if variant.fields[1].spec.value == x then return oracle(variant, v) end
+            local value = variant.fields[1].spec.value
+            if type(x) == type(value) and value == x then return oracle(variant, v) end
         end
         return false
     end
@@ -1140,7 +1271,45 @@ return function(env)
         return true
     end
 
-    local leafOracles = { int64 = oracleInt64, bytes = oracleBytes, utf8 = oracleUtf8 }
+    local function oracleLiteral(spec, v)
+        return type(v) == type(spec.value) and v == spec.value
+    end
+
+    local function oracleNull(spec, v)
+        return rawequal(v, spec.sentinel)
+    end
+
+    local function oracleFunc(_, v)
+        return type(v) == "function"
+    end
+
+    local function oracleUserdata(spec, v)
+        if type(v) ~= "userdata" then return false end
+        return spec.mt == nil or getmetatable(v) == spec.mt
+    end
+
+    local function oracleInstance(spec, v)
+        local t = type(v)
+        if t ~= "table" and t ~= "userdata" then return false end
+        return getmetatable(v) == spec.mt
+    end
+
+    local function oracleCdata(spec, v)
+        return ffi ~= nil and ffi.istype(spec.ctype, v)
+    end
+
+    local function oracleNotNullPtr(spec, v)
+        if not ffi then return false end
+        local info = cdataInfo[v]
+        if not info or not info.ptr or info.null then return false end
+        return ffi.istype(spec.ctype, v)
+    end
+
+    local leafOracles = {
+        int64 = oracleInt64, bytes = oracleBytes, utf8 = oracleUtf8, literal = oracleLiteral,
+        null = oracleNull, func = oracleFunc, userdata = oracleUserdata, instanceOf = oracleInstance,
+        cdata = oracleCdata, notNullPtr = oracleNotNullPtr,
+    }
     for _, name in ipairs(fixedNames) do leafOracles[name] = oracleFixed end
 
     local function oracleBase(spec, v)
@@ -1172,6 +1341,9 @@ return function(env)
                 local value = spec.default.value
                 if type(value) == "function" then x = value() else x = value end
             end
+        elseif spec.nullable and rawequal(v, spec.nullable.sentinel) then
+            first = spec.nullable.at + 1
+            x = v
         else
             local ok
             ok, x = oracleBase(spec, v)
@@ -1425,5 +1597,100 @@ return function(env)
         print(("fuzz fromString: %d cases, %d accepted, %d rejected"):format(accepted + rejected, accepted, rejected))
         assertTrue(accepted >= FROM_STRING_CASES / 10)
         assertTrue(rejected >= FROM_STRING_CASES / 10)
+    end)
+
+    local P4B_SEED = 20261113
+    local P4B_SCHEMAS = 300
+    local P4B_INPUTS = 40
+
+    local function leafInput(spec)
+        if (spec.kind == "cdata" or spec.kind == "notNullPtr") and chance(25) then
+            return pick(nullMakers)()
+        end
+        return genValid(spec)
+    end
+
+    local function expectedLeaf(spec, v)
+        if spec.optional and rawequal(v, nil) then return true end
+        if spec.nullable and rawequal(v, spec.nullable.sentinel) then return true end
+        return leafOracles[spec.kind](spec, v)
+    end
+
+    test("fuzz: literal, null, func, userdata, instanceOf, cdata and notNullPtr follow the independent oracles", function()
+        reseed(P4B_SEED)
+        local cases, accepted, rejected = 0, 0, 0
+        for _, kind in ipairs(p4bKinds) do
+            for s = 1, P4B_SCHEMAS do
+                local spec = leafSpec(kind)
+                spec.optional = chance(25)
+                spec.nullable = chance(30) and { at = 0, sentinel = pick(sentinelPool) } or false
+                local gTest, cTest, cCheck = compileBoth(spec)
+                if not z._isGenerated(gTest) then
+                    error(("schema #%d fell back to closures: %s"):format(s, describe(spec)), 0)
+                end
+                local schema = build(spec)
+                for j = 1, P4B_INPUTS do
+                    local data = leafInput(spec)
+                    local want = expectedLeaf(spec, data)
+                    local okG, g = pcall(gTest, data)
+                    local okC, c = pcall(cTest, data)
+                    local okK, issues = pcall(cCheck, data, {}, 0, nil)
+                    local okP, parsed, out = pcall(schema.safeParse, schema, data)
+                    if not (okG and okC and okK and okP) or g ~= want or c ~= want or (issues == nil) ~= want
+                        or parsed ~= want or (want and not rawequal(out, data)) then
+                        error(("oracle mismatch on %s schema #%d input #%d\nschema: %s\ndata: %s\n"
+                            .. "oracle=%s codegen=%s(%s) closures=%s(%s) check-clean=%s(%s) safeParse=%s(%s)"):format(
+                            kind, s, j, describe(spec), show(data), tostring(want), tostring(g), tostring(okG),
+                            tostring(c), tostring(okC), tostring(issues == nil), tostring(okK),
+                            tostring(parsed), tostring(okP)), 0)
+                    end
+                    cases = cases + 1
+                    if want then
+                        accepted = accepted + 1
+                    else
+                        rejected = rejected + 1
+                        local code = kind == "literal" and "invalid_literal" or "invalid_type"
+                        if issues[1].code ~= code then
+                            error(("issue mismatch on %s schema #%d input #%d\nschema: %s\ndata: %s\n"
+                                .. "oracle=%s got=%s"):format(
+                                kind, s, j, describe(spec), show(data), code, tostring(issues[1].code)), 0)
+                        end
+                    end
+                end
+            end
+        end
+        print(("fuzz p4b: %d cases, %d accepted, %d rejected"):format(cases, accepted, rejected))
+        assertEq(cases, #p4bKinds * P4B_SCHEMAS * P4B_INPUTS)
+        assertTrue(accepted >= #p4bKinds * P4B_SCHEMAS)
+        assertTrue(rejected >= #p4bKinds * P4B_SCHEMAS)
+    end)
+
+    test("fuzz: the sentinel and the optional marker stay apart on every kind", function()
+        reseed(P4B_SEED + 1)
+        local kinds = { "string", "number", "integer", "boolean", "int64", "utf8", "any", "null", "func", "userdata" }
+        local seen = 0
+        for _, kind in ipairs(kinds) do
+            for _ = 1, 40 do
+                local spec = leafSpec(kind)
+                spec.optional = chance(50)
+                spec.nullable = chance(50) and { at = 0, sentinel = pick(sentinelPool) } or false
+                local schema = build(spec)
+                local other = pick(sentinelPool)
+                local wantNil = spec.optional == true
+                if kind == "any" or kind == "unknown" then wantNil = true end
+                if schema:is(nil) ~= wantNil then
+                    error(("nil verdict wrong on %s"):format(describe(spec)), 0)
+                end
+                if spec.nullable then
+                    if not schema:is(spec.nullable.sentinel) then
+                        error(("sentinel refused on %s"):format(describe(spec)), 0)
+                    end
+                    seen = seen + 1
+                elseif kind ~= "any" and kind ~= "null" and kind ~= "userdata" and schema:is(other) then
+                    error(("sentinel accepted without nullable on %s"):format(describe(spec)), 0)
+                end
+            end
+        end
+        assertTrue(seen > 100)
     end)
 end
