@@ -302,6 +302,7 @@ Scénarios :
 - [x] `integer()` accepte `3.0` en 5.3+ par défaut, `{ strict = true }` pour refuser (2026-11-08)
 - [x] Messages d'erreur : codes stables + anglais intégré, table de messages remplaçable (2026-11-08)
 - [x] Budgets §6 : bloquants en local (`bench/budgets.lua`), informatifs en CI (2026-11-08)
+- [x] Schémas impurs (P2) : passe unique `_parse` (validation + sortie dans l'ordre de la chaîne), `default` rendu tel quel ou `fn()`, échec de transform via `ctx:addIssue`, `coerce` strict, `strip`/`strict` le dernier gagne, `_parse` en closures, S8 informatif (2026-11-08)
 - [ ] Compilation par paliers en v2 : seulement si S9 montre un vrai problème
 
 ---
