@@ -11,7 +11,7 @@
 **zigo garde le côté Lua de chaque frontière.** Tout ce qui entre dans Lua (résultat SQL, retour FFI C/Rust/ASM/Lurlang, paquet réseau, config, input utilisateur) passe par un schéma qui le vérifie et rend une valeur sûre.
 
 Dans le périmètre v1 :
-- API fluente immuable façon Zod (`v.object`, `v.string():min(3)`, `:optional()`…)
+- API fluente immuable façon Zod (`z.object`, `z.string():min(3)`, `:optional()`…)
 - `parse` / `safeParse` / `is`
 - erreurs structurées avec chemin, déterministes
 - types « frontière » que Lua représente mal : entiers 64 bits, `cdata` LuaJIT, sentinelles NULL, `bytes` vs `utf8`, `userdata`
@@ -32,7 +32,7 @@ Hors périmètre (explicitement) :
 3. **Erreurs déterministes** : même entrée → mêmes erreurs dans le même ordre. Jamais de `pairs` dans un chemin qui produit des erreurs ; les clés d'objet sont triées à la construction.
 4. **Schémas immuables** : chaque modificateur rend un nouveau nœud. Un schéma peut être partagé entre coroutines/threads de jeu sans risque.
 5. **Compilé une fois** : la compilation est paresseuse (au 1er usage) puis cachée sur le nœud. Construire un schéma dans un handler est un bug de l'utilisateur, documenté comme tel.
-6. **Aucune coercition implicite** : `"12"` n'est pas un entier. Coercition uniquement via `v.coerce.*`.
+6. **Aucune coercition implicite** : `"12"` n'est pas un entier. Coercition uniquement via `z.coerce.*`.
 7. **Chaque optimisation est justifiée par un bench** dans `bench/results/`. Pas de bench, pas de merge.
 
 ---
@@ -40,7 +40,7 @@ Hors périmètre (explicitement) :
 ## 3. Architecture
 
 ```
- API fluente (v.*)          ──▶  nœud immuable = descripteur (données pures)
+ API fluente (z.*)          ──▶  nœud immuable = descripteur (données pures)
                                    │  flags calculés à la construction :
                                    │  pure, hasTransform, hasDefault, maxDepth…
                                    ▼
@@ -81,7 +81,7 @@ C'est un chemin rare : il ne justifie pas un second générateur de code à main
 
 ```
 zigo/
-  init.lua            -- API publique v.*
+  init.lua            -- API publique z.*
   node.lua            -- constructeur de nœud, immutabilité, flags, cache de compilation
   types/              -- un fichier par famille : primitives, string, number, int64,
                       -- object, array, tuple, union, enum, literal, lazy, boundary (cdata, null, bytes, utf8)
@@ -100,16 +100,16 @@ tests/  bench/  docs/fr  docs/en  build.lua  dist/
 ## 4. API publique
 
 ```lua
-local v = require("zigo")
+local z = require("zigo")
 
-local User = v.object({
-    id      = v.int64(),                         -- number entier ≤ 2^53, cdata int64 (LuaJIT)
-    name    = v.utf8():min(3):max(32),           -- longueur en caractères, UTF-8 vérifié
-    email   = v.string():email(),
-    age     = v.integer():between(0, 150):optional(),
-    role    = v.enum({ "admin", "user", "guest" }),
-    tags    = v.array(v.string():max(16)):max(10):default({}),
-    address = v.object({ city = v.string():min(1), zip = v.string():len(5) }),
+local User = z.object({
+    id      = z.int64(),                         -- number entier ≤ 2^53, cdata int64 (LuaJIT)
+    name    = z.utf8():min(3):max(32),           -- longueur en caractères, UTF-8 vérifié
+    email   = z.string():email(),
+    age     = z.integer():between(0, 150):optional(),
+    role    = z.enum({ "admin", "user", "guest" }),
+    tags    = z.array(z.string():max(16)):max(10):default({}),
+    address = z.object({ city = z.string():min(1), zip = z.string():len(5) }),
 }):strict()
 
 local ok, user, err = User:safeParse(input)   -- ne lève jamais
@@ -126,7 +126,7 @@ local bool          = User:is(input)          -- _test seul, aucune allocation
 `string`, `utf8`, `bytes`, `number`, `integer`, `int64`, `boolean`, `func`, `literal`, `enum`, `any`, `unknown`, `never`, `null(sentinel)`
 `object`, `array`, `tuple`, `record(k, v)`, `union`, `discriminatedUnion(key, …)`, `intersection`, `lazy(fn)`
 `:optional()`, `:nullable()` (accepte la sentinelle NULL configurée), `:default(x | fn)`, `:refine(fn, opts)`, `:transform(fn)`, `:pipe(schema)`, `:describe(txt)`
-`v.coerce.integer()`, `v.coerce.number()`, `v.coerce.boolean()`, `v.coerce.string()`
+`z.coerce.integer()`, `z.coerce.number()`, `z.coerce.boolean()`, `z.coerce.string()`
 
 ### Objets : clés inconnues
 | Mode | Effet | Coût |
@@ -140,10 +140,10 @@ local bool          = User:is(input)          -- _test seul, aucune allocation
 ### Types frontière (le différenciateur)
 | Frontière | Primitive |
 |---|---|
-| SQL | `v.null(cjson.null)` / `v.null(ngx.null)`, `v.int64()` (accepte string numérique avec `{ fromString = true }`), `:nullable()` distinct de `:optional()` |
-| FFI C / Rust / ASM / Lurlang | `v.cdata("struct foo*")` (`ffi.istype`), `v.notNullPtr()`, `v.int64()`, `v.u8()…v.i32()…v.u32()` (bornes vérifiées), `v.bytes():len(n)` |
-| Réseau | `v.bytes()` / `v.utf8()`, options globales `{ maxDepth, maxKeys, maxErrors, abortEarly }` |
-| Lua | `v.integer()` (via `math.type` en 5.3+, `v % 1 == 0` ailleurs), `v.array()` refuse les trous, `v.userdata(mt)`, `v.instanceOf(mt)` |
+| SQL | `z.null(cjson.null)` / `z.null(ngx.null)`, `z.int64()` (accepte string numérique avec `{ fromString = true }`), `:nullable()` distinct de `:optional()` |
+| FFI C / Rust / ASM / Lurlang | `z.cdata("struct foo*")` (`ffi.istype`), `z.notNullPtr()`, `z.int64()`, `z.u8()…z.i32()…z.u32()` (bornes vérifiées), `z.bytes():len(n)` |
+| Réseau | `z.bytes()` / `z.utf8()`, options globales `{ maxDepth, maxKeys, maxErrors, abortEarly }` |
+| Lua | `z.integer()` (via `math.type` en 5.3+, `v % 1 == 0` ailleurs), `z.array()` refuse les trous, `z.userdata(mt)`, `z.instanceOf(mt)` |
 
 ### Relation avec matchigo : interop oui, dépendance non
 
@@ -296,7 +296,8 @@ Scénarios :
 ## 10. Décisions ouvertes
 
 - [x] Nom : `zigo` (décidé le 2026-11-08, remplace validigo)
-- [ ] Namespace : `v` ou `z` (clin d'œil à Zod). Convention de famille : une lettre par lib (`m`/`P` matchigo). Vérifier la disponibilité de `zigo` sur LuaRocks avant de réserver
+- [x] Namespace : `z` (décidé le 2026-11-08, clin d'œil à Zod ; une lettre par lib, `m`/`P` pour matchigo)
+- [ ] Vérifier la disponibilité de `zigo` sur LuaRocks avant de réserver
 - [ ] Défaut des clés inconnues : `passthrough` (proposé) ou `strict`
 - [ ] `integer()` accepte-t-il `3.0` en 5.3+ par défaut ?
 - [ ] Messages d'erreur : FR et EN intégrés, ou format seul et i18n laissée à l'utilisateur ?
