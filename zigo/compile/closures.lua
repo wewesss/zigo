@@ -122,6 +122,43 @@ local function reportUnknownKeys(v, known, path, depth, errs)
     return errs
 end
 
+local function collectKeys(v)
+    local list, n, exotic = nil, 0, nil
+    for k in next, v do
+        if keyRank[type(k)] then
+            if not list then list = {} end
+            n = n + 1
+            list[n] = k
+        else
+            if not exotic then exotic = {} end
+            exotic[type(k)] = true
+        end
+    end
+    if list then sort(list, keyLess) end
+    return list, n, exotic
+end
+
+local function reportExotic(exotic, path, depth, errs)
+    for i = 1, #exoticTypes do
+        local t = exoticTypes[i]
+        if exotic[t] then
+            errs = emit(errs, path, depth, "unrecognized_key", nil, t)
+        end
+    end
+    return errs
+end
+
+local function emitUnion(errs, path, depth, lists)
+    local p = {}
+    for i = 1, depth do p[i] = path[i] end
+    local issue = { path = p, code = "invalid_union", unionErrors = lists }
+    if errs then
+        errs[#errs + 1] = issue
+        return errs
+    end
+    return { issue }
+end
+
 testBuilders.string = function(d)
     local min, max, len = d.min, d.max, d.len
     if not (min or max or len) then
@@ -352,8 +389,180 @@ checkBuilders.array = function(d)
     end
 end
 
+testBuilders.union = function(d)
+    local variants = d.variants
+    local n = #variants
+    local tests = {}
+    for i = 1, n do tests[i] = variants[i]._test end
+    return function(v)
+        for i = 1, n do
+            if tests[i](v) then return true end
+        end
+        return false
+    end
+end
+
+checkBuilders.union = function(d)
+    local variants = d.variants
+    local n = #variants
+    local tests, checks = {}, {}
+    for i = 1, n do
+        tests[i] = variants[i]._test
+        checks[i] = variants[i]._check
+    end
+    return function(v, path, depth, errs)
+        for i = 1, n do
+            if tests[i](v) then return errs end
+        end
+        local lists = {}
+        for i = 1, n do
+            lists[i] = checks[i](v, path, depth, nil) or {}
+        end
+        return emitUnion(errs, path, depth, lists)
+    end
+end
+
+testBuilders.discriminatedUnion = function(d)
+    local key, values, variants = d.key, d.values, d.variants
+    local get = d.meta and indexGet or rawget
+    local map = {}
+    for i = 1, #values do map[values[i]] = variants[i]._test end
+    return function(v)
+        if type(v) ~= "table" then return false end
+        local test = map[get(v, key)]
+        if test == nil then return false end
+        return test(v)
+    end
+end
+
+checkBuilders.discriminatedUnion = function(d)
+    local key, values, variants = d.key, d.values, d.variants
+    local get = d.meta and indexGet or rawget
+    local map = {}
+    for i = 1, #values do map[values[i]] = variants[i]._check end
+    return function(v, path, depth, errs)
+        if type(v) ~= "table" then
+            return emit(errs, path, depth, "invalid_type", "object", describe(v))
+        end
+        local x = get(v, key)
+        local check = map[x]
+        if check == nil then
+            local nd = depth + 1
+            path[nd] = key
+            return emit(errs, path, nd, "invalid_union_discriminator", copyList(values), gotValue(x))
+        end
+        return check(v, path, depth, errs)
+    end
+end
+
+testBuilders.tuple = function(d)
+    local items, rest, meta = d.items, d.rest, d.meta
+    local count = #items
+    local tests = {}
+    for i = 1, count do tests[i] = items[i]._test end
+    local restTest = rest and rest._test
+    local get = meta and indexGet or rawget
+    return function(v)
+        if type(v) ~= "table" then return false end
+        local n
+        if meta then
+            n = #v
+            if not holeFree(v, n) then return false end
+        else
+            n = rawlen(v)
+            if not isSequence(v, n) then return false end
+        end
+        if n > count and not restTest then return false end
+        for i = 1, count do
+            if not tests[i](get(v, i)) then return false end
+        end
+        if restTest then
+            for i = count + 1, n do
+                if not restTest(get(v, i)) then return false end
+            end
+        end
+        return true
+    end
+end
+
+checkBuilders.tuple = function(d)
+    local items, rest, meta = d.items, d.rest, d.meta
+    local count = #items
+    local checks = {}
+    for i = 1, count do checks[i] = items[i]._check end
+    local restCheck = rest and rest._check
+    local get = meta and indexGet or rawget
+    return function(v, path, depth, errs)
+        if type(v) ~= "table" then
+            return emit(errs, path, depth, "invalid_type", "tuple", describe(v))
+        end
+        local n, ok
+        if meta then
+            n = #v
+            ok = holeFree(v, n)
+        else
+            n = rawlen(v)
+            ok = isSequence(v, n)
+        end
+        if not ok then
+            return emit(errs, path, depth, "invalid_array", "sequence", "table")
+        end
+        if n > count and not restCheck then
+            errs = emit(errs, path, depth, "too_big", count, n, "array")
+        end
+        local nd = depth + 1
+        for i = 1, count do
+            path[nd] = i
+            errs = checks[i](get(v, i), path, nd, errs)
+        end
+        if restCheck then
+            for i = count + 1, n do
+                path[nd] = i
+                errs = restCheck(get(v, i), path, nd, errs)
+            end
+        end
+        return errs
+    end
+end
+
+testBuilders.record = function(d)
+    local keyTest, valueTest = d.key._test, d.value._test
+    return function(v)
+        if type(v) ~= "table" then return false end
+        for k, x in next, v do
+            if not keyRank[type(k)] or not keyTest(k) or not valueTest(x) then return false end
+        end
+        return true
+    end
+end
+
+checkBuilders.record = function(d)
+    local keyCheck, valueCheck = d.key._check, d.value._check
+    return function(v, path, depth, errs)
+        if type(v) ~= "table" then
+            return emit(errs, path, depth, "invalid_type", "record", describe(v))
+        end
+        local list, n, exotic = collectKeys(v)
+        local nd = depth + 1
+        for i = 1, n do
+            local k = list[i]
+            path[nd] = k
+            errs = keyCheck(k, path, nd, errs)
+            errs = valueCheck(rawget(v, k), path, nd, errs)
+        end
+        if exotic then errs = reportExotic(exotic, path, depth, errs) end
+        return errs
+    end
+end
+
 M.emit = emit
 M.describe = describe
+M.gotValue = gotValue
+M.copyList = copyList
+M.keyRank = keyRank
+M.collectKeys = collectKeys
+M.reportExotic = reportExotic
+M.emitUnion = emitUnion
 M.inBounds = inBounds
 M.checkBounds = checkBounds
 M.isSequence = isSequence

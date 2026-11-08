@@ -10,6 +10,7 @@
 ---@field type? string
 ---@field exact? boolean
 ---@field message? string
+---@field unionErrors? zigo.Issue[][]
 
 ---@class zigo.Flattened
 ---@field formErrors string[]
@@ -113,6 +114,13 @@ function ObjectNode:strict() end
 ---@return zigo.ObjectNode
 function ObjectNode:strip() end
 
+---@class zigo.TupleNode : zigo.Node
+local TupleNode = {}
+
+---@param schema zigo.Node
+---@return zigo.TupleNode
+function TupleNode:rest(schema) end
+
 ---@class zigo.IntegerOptions
 ---@field strict? boolean
 
@@ -180,6 +188,25 @@ function zigo.array(item, opts) end
 ---@param opts? zigo.ContainerOptions
 ---@return zigo.ObjectNode
 function zigo.object(shape, opts) end
+
+---@param items zigo.Node[]
+---@param opts? zigo.ContainerOptions
+---@return zigo.TupleNode
+function zigo.tuple(items, opts) end
+
+---@param key zigo.Node must be pure
+---@param value zigo.Node
+---@return zigo.Node
+function zigo.record(key, value) end
+
+---@param ... zigo.Node
+---@return zigo.Node
+function zigo.union(...) end
+
+---@param key string
+---@param ... zigo.ObjectNode objects whose field `key` is a plain literal
+---@return zigo.Node
+function zigo.discriminatedUnion(key, ...) end
 
 ---@param x any
 ---@return boolean

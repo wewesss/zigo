@@ -7,6 +7,9 @@ local primitives = require("zigo.types.primitives")
 local array = require("zigo.types.array")
 local object = require("zigo.types.object")
 local coerce = require("zigo.types.coerce")
+local tuple = require("zigo.types.tuple")
+local record = require("zigo.types.record")
+local union = require("zigo.types.union")
 
 node.setCompiler("_test", function(self)
     if self.pure then return codegen.test(self) end
@@ -54,6 +57,10 @@ return {
     never = primitives.never,
     array = array.array,
     object = object.object,
+    tuple = tuple.tuple,
+    record = record.record,
+    union = union.union,
+    discriminatedUnion = union.discriminatedUnion,
     coerce = {
         number = coerce.number,
         integer = coerce.integer,

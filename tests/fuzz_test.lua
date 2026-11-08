@@ -11,6 +11,7 @@ return function(env)
 
     local huge = math.huge
     local nan = 0 / 0
+    local unpack = table.unpack or unpack
 
     local state = SEED
     local function reseed(s) state = s end
@@ -24,7 +25,10 @@ return function(env)
 
     local function sortedKeys(t)
         local keys = {}
-        for k in next, t do keys[#keys + 1] = k end
+        for k in next, t do
+            local tk = type(k)
+            if tk == "string" or tk == "number" or tk == "boolean" then keys[#keys + 1] = k end
+        end
         table.sort(keys, function(a, b)
             local ta, tb = type(a), type(b)
             if ta ~= tb then return ta < tb end
@@ -89,11 +93,41 @@ return function(env)
         "boolean", "boolean", "literal", "literal", "enum", "enum", "any", "unknown", "never",
     }
 
+    local function leafSpec(kind)
+        local spec = { kind = kind }
+        if kind == "string" then
+            spec.mods = genMods("string", true)
+        elseif kind == "number" then
+            spec.mods = genMods("number", false)
+        elseif kind == "integer" then
+            spec.strict = chance(25)
+            spec.mods = genMods("integer", false)
+        elseif kind == "literal" then
+            local t = rand(3)
+            if t == 1 then spec.value = pick(stringPool)
+            elseif t == 2 then spec.value = pick(numPool)
+            else spec.value = chance(50) end
+        elseif kind == "enum" then
+            spec.values = {}
+            for i = 1, rand(4) do
+                local t = rand(4)
+                if t <= 2 then spec.values[i] = pick(stringPool)
+                elseif t == 3 then spec.values[i] = pick(numPool)
+                else spec.values[i] = chance(50) end
+            end
+        end
+        return spec
+    end
+
+    local recordKeyKinds = { "string", "string", "integer", "number", "enum", "boolean", "any", "literal" }
+    local discriminantKeys = { "kind", "type", "t", "\0d", "]]" }
+    local discriminantValues = { "a", "b", "c", "", 1, 2, 2.5, true, false }
+
     local genSpec
     genSpec = function(depth)
         local roll = rand(100)
         local spec
-        if depth < MAX_DEPTH and roll <= 20 then
+        if depth < MAX_DEPTH and roll <= 16 then
             spec = { kind = "object", fields = {}, strict = chance(35), meta = chance(15) }
             local pool = {}
             for i = 1, #keyPool do pool[i] = keyPool[i] end
@@ -101,34 +135,46 @@ return function(env)
                 local idx = rand(#pool)
                 spec.fields[#spec.fields + 1] = { key = table.remove(pool, idx), spec = genSpec(depth + 1) }
             end
-        elseif depth < MAX_DEPTH and roll <= 36 then
+        elseif depth < MAX_DEPTH and roll <= 28 then
             spec = { kind = "array", item = genSpec(depth + 1), meta = chance(20), mods = genMods("array", true) }
-        else
-            local kind = pick(leafKinds)
-            spec = { kind = kind }
-            if kind == "string" then
-                spec.mods = genMods("string", true)
-            elseif kind == "number" then
-                spec.mods = genMods("number", false)
-            elseif kind == "integer" then
-                spec.strict = chance(25)
-                spec.mods = genMods("integer", false)
-            elseif kind == "literal" then
-                local t = rand(3)
-                if t == 1 then spec.value = pick(stringPool)
-                elseif t == 2 then spec.value = pick(numPool)
-                else spec.value = chance(50) end
-            elseif kind == "enum" then
-                spec.values = {}
-                for i = 1, rand(4) do
-                    local t = rand(4)
-                    if t <= 2 then spec.values[i] = pick(stringPool)
-                    elseif t == 3 then spec.values[i] = pick(numPool)
-                    else spec.values[i] = chance(50) end
+        elseif depth < MAX_DEPTH and roll <= 34 then
+            spec = { kind = "tuple", items = {}, meta = chance(15) }
+            for i = 1, rand(4) - 1 do spec.items[i] = genSpec(depth + 1) end
+            if chance(40) then spec.rest = genSpec(depth + 1) end
+        elseif depth < MAX_DEPTH and roll <= 40 then
+            local key = leafSpec(pick(recordKeyKinds))
+            key.optional = false
+            spec = { kind = "record", key = key, value = genSpec(depth + 1) }
+        elseif depth < MAX_DEPTH and roll <= 46 then
+            spec = { kind = "union", variants = {} }
+            for i = 1, rand(3) + 1 do spec.variants[i] = genSpec(depth + 1) end
+        elseif depth < MAX_DEPTH and roll <= 52 then
+            spec = { kind = "dunion", key = pick(discriminantKeys), variants = {} }
+            local values = {}
+            for i = 1, #discriminantValues do values[i] = discriminantValues[i] end
+            for i = 1, rand(3) do
+                local variant = {
+                    kind = "object", fields = {}, strict = chance(25), meta = chance(15),
+                    variant = true, optional = false,
+                }
+                variant.fields[1] = {
+                    key = spec.key,
+                    spec = { kind = "literal", value = table.remove(values, rand(#values)), plain = true, optional = false },
+                }
+                local pool = {}
+                for j = 1, #keyPool do
+                    if keyPool[j] ~= spec.key then pool[#pool + 1] = keyPool[j] end
                 end
+                for _ = 1, rand(3) - 1 do
+                    local idx = rand(#pool)
+                    variant.fields[#variant.fields + 1] = { key = table.remove(pool, idx), spec = genSpec(depth + 2) }
+                end
+                spec.variants[i] = variant
             end
+        else
+            spec = leafSpec(pick(leafKinds))
         end
-        spec.optional = chance(22)
+        if spec.optional == nil then spec.optional = chance(22) end
         return spec
     end
 
@@ -149,6 +195,20 @@ return function(env)
         if spec.optional then parts[#parts + 1] = "optional" end
         local out = table.concat(parts, " ")
         if spec.kind == "array" then out = out .. " of (" .. describe(spec.item) .. ")" end
+        if spec.kind == "tuple" then
+            local items = {}
+            for i, item in ipairs(spec.items) do items[i] = describe(item) end
+            out = out .. " (" .. table.concat(items, "; ") .. ")"
+            if spec.rest then out = out .. " rest (" .. describe(spec.rest) .. ")" end
+        end
+        if spec.kind == "record" then
+            out = out .. " (" .. describe(spec.key) .. " => " .. describe(spec.value) .. ")"
+        end
+        if spec.kind == "union" or spec.kind == "dunion" then
+            local variants = {}
+            for i, variant in ipairs(spec.variants) do variants[i] = describe(variant) end
+            out = out .. (spec.key and (" on " .. show(spec.key)) or "") .. " <" .. table.concat(variants, " | ") .. ">"
+        end
         if spec.kind == "object" then
             local fields = {}
             for i, f in ipairs(spec.fields) do fields[i] = show(f.key) .. ": " .. describe(f.spec) end
@@ -218,6 +278,21 @@ return function(env)
             n = z.object(shape, spec.meta and { meta = true } or nil)
             if spec.strict then n = n:strict() end
             if spec.strip then n = n:strip() end
+        elseif kind == "tuple" then
+            local items = {}
+            for i, item in ipairs(spec.items) do items[i] = build(item) end
+            n = z.tuple(items, spec.meta and { meta = true } or nil)
+            if spec.rest then n = n:rest(build(spec.rest)) end
+        elseif kind == "record" then
+            n = z.record(build(spec.key), build(spec.value))
+        elseif kind == "union" or kind == "dunion" then
+            local variants = {}
+            for i, variant in ipairs(spec.variants) do variants[i] = build(variant) end
+            if kind == "union" then
+                n = z.union(unpack(variants))
+            else
+                n = z.discriminatedUnion(spec.key, unpack(variants))
+            end
         end
         for _, m in ipairs(spec.mods or {}) do n = n[m[1]](n, m[2], m[3]) end
         n = applyImpure(n, spec)
@@ -315,6 +390,51 @@ return function(env)
                 if x ~= nil then t[f.key] = x end
             end
             if chance(25) then t[chance(50) and "extra" or 1] = junk() end
+            return t
+        elseif kind == "tuple" then
+            local t = {}
+            local count = #spec.items
+            local n = count
+            if chance(8) then n = rand(count + 1) - 1 end
+            for i = 1, n do
+                local x = genValid(spec.items[i])
+                if x == nil then break end
+                t[i] = x
+            end
+            if spec.rest then
+                if chance(70) then
+                    for _ = 1, rand(3) - 1 do
+                        local x = genValid(spec.rest)
+                        if x ~= nil then t[#t + 1] = x end
+                    end
+                end
+            elseif chance(8) then
+                local x = junk()
+                if x ~= nil then t[#t + 1] = x end
+            end
+            if chance(4) then t.extra = junk() end
+            return t
+        elseif kind == "record" then
+            local t = {}
+            for _ = 1, rand(4) - 1 do
+                local k = genValid(spec.key)
+                if k ~= nil and k == k then
+                    local x = genValid(spec.value)
+                    if x ~= nil then t[k] = x end
+                end
+            end
+            if chance(6) then
+                local k = junk()
+                if k ~= nil and k == k then t[k] = junk() end
+            end
+            return t
+        elseif kind == "union" then
+            if chance(10) then return junk() end
+            return genValid(pick(spec.variants))
+        elseif kind == "dunion" then
+            if chance(8) then return junk() end
+            local t = genValid(pick(spec.variants))
+            if type(t) == "table" and chance(8) then t[spec.key] = junk() end
             return t
         end
     end
@@ -425,9 +545,18 @@ return function(env)
 
     local function decorate(spec)
         if spec.kind == "object" then
-            for _, f in ipairs(spec.fields) do decorate(f.spec) end
+            for _, f in ipairs(spec.fields) do
+                if not f.spec.plain then decorate(f.spec) end
+            end
         elseif spec.kind == "array" then
             decorate(spec.item)
+        elseif spec.kind == "tuple" then
+            for _, item in ipairs(spec.items) do decorate(item) end
+            if spec.rest then decorate(spec.rest) end
+        elseif spec.kind == "record" then
+            decorate(spec.value)
+        elseif spec.kind == "union" or spec.kind == "dunion" then
+            for _, variant in ipairs(spec.variants) do decorate(variant) end
         end
         if chance(30) then
             local steps = {}
@@ -439,7 +568,7 @@ return function(env)
                 end
             end
             if #steps > 0 then spec.chain = steps end
-            if chance(50) then
+            if chance(50) and not spec.variant then
                 spec.default = { at = rand(#steps + 1) - 1, value = pick(defaultValues) }
                 if chance(70) then spec.optional = false end
             end
@@ -447,27 +576,55 @@ return function(env)
         end
     end
 
-    local function isPure(spec)
-        if spec.chain or spec.default or spec.strip then return false end
-        if spec.kind == "object" then
-            for _, f in ipairs(spec.fields) do
-                if not isPure(f.spec) then return false end
-            end
-        elseif spec.kind == "array" then
-            return isPure(spec.item)
+    local isPure
+
+    local function allPure(list)
+        for _, child in ipairs(list) do
+            if not isPure(child) then return false end
         end
         return true
     end
 
-    local function needsStructure(spec)
-        if spec.kind == "object" then
-            if spec.strip then return true end
+    local function childrenPure(spec)
+        local kind = spec.kind
+        if kind == "object" then
             for _, f in ipairs(spec.fields) do
-                if not isPure(f.spec) then return true end
+                if not isPure(f.spec) then return false end
             end
-            return false
+        elseif kind == "array" then
+            return isPure(spec.item)
+        elseif kind == "tuple" then
+            return allPure(spec.items) and (spec.rest == nil or isPure(spec.rest))
+        elseif kind == "record" then
+            return isPure(spec.value)
+        elseif kind == "union" or kind == "dunion" then
+            return allPure(spec.variants)
         end
-        return not isPure(spec.item)
+        return true
+    end
+
+    isPure = function(spec)
+        if spec.chain or spec.default or spec.strip then return false end
+        return childrenPure(spec)
+    end
+
+    local function needsStructure(spec)
+        if spec.kind == "object" and spec.strip then return true end
+        return not childrenPure(spec)
+    end
+
+    local newKinds = { tuple = true, record = true, union = true, dunion = true }
+
+    local function independent(spec)
+        if newKinds[spec.kind] then return true end
+        if spec.kind == "object" then
+            for _, f in ipairs(spec.fields) do
+                if independent(f.spec) then return true end
+            end
+        elseif spec.kind == "array" then
+            return independent(spec.item)
+        end
+        return false
     end
 
     local function baseOnly(spec)
@@ -568,14 +725,95 @@ return function(env)
         return true, out
     end
 
+    local function sequenceLength(v, meta)
+        local n
+        if meta then
+            n = #v
+            for i = 1, n do
+                if v[i] == nil then return nil end
+            end
+            return n
+        end
+        n = rawLength(v)
+        local count = 0
+        for k in next, v do
+            count = count + 1
+            if type(k) ~= "number" or k < 1 or k > n or k % 1 ~= 0 then return nil end
+        end
+        if count ~= n then return nil end
+        return n
+    end
+
+    local function oracleTuple(spec, v)
+        if type(v) ~= "table" then return false end
+        local n = sequenceLength(v, spec.meta)
+        if not n then return false end
+        local count = #spec.items
+        if n > count and not spec.rest then return false end
+        local out = {}
+        for i = 1, n > count and n or count do
+            local itemSpec = spec.items[i] or spec.rest
+            local x
+            if spec.meta then x = v[i] else x = rawget(v, i) end
+            local ok, y = oracle(itemSpec, x)
+            if not ok then return false end
+            out[i] = y
+        end
+        return true, out
+    end
+
+    local function oracleRecord(spec, v)
+        if type(v) ~= "table" then return false end
+        local out = {}
+        for k, x in next, v do
+            local tk = type(k)
+            if tk ~= "string" and tk ~= "number" and tk ~= "boolean" then return false end
+            if not oracle(spec.key, k) then return false end
+            local ok, y = oracle(spec.value, x)
+            if not ok then return false end
+            out[k] = y
+        end
+        return true, out
+    end
+
+    local function oracleUnion(spec, v)
+        for _, variant in ipairs(spec.variants) do
+            local ok, out = oracle(variant, v)
+            if ok then return true, out end
+        end
+        return false
+    end
+
+    local function oracleDunion(spec, v)
+        if type(v) ~= "table" then return false end
+        local viaIndex = false
+        for _, variant in ipairs(spec.variants) do
+            if variant.meta then viaIndex = true end
+        end
+        local x
+        if viaIndex then x = v[spec.key] else x = rawget(v, spec.key) end
+        for _, variant in ipairs(spec.variants) do
+            if variant.fields[1].spec.value == x then return oracle(variant, v) end
+        end
+        return false
+    end
+
+    local structuredOracles = {
+        object = oracleObject, array = oracleArray, tuple = oracleTuple, record = oracleRecord,
+        union = oracleUnion, dunion = oracleDunion,
+    }
+
     local function oracleBase(spec, v)
-        if spec.kind == "object" and needsStructure(spec) then return oracleObject(spec, v) end
-        if spec.kind == "array" and needsStructure(spec) then return oracleArray(spec, v) end
+        local structured = structuredOracles[spec.kind]
+        if structured then
+            if needsStructure(spec) then return structured(spec, v) end
+            if independent(spec) then return structured(spec, v) and true or false, v end
+        end
         return cached(baseSchemas, spec, baseOnly):is(v), v
     end
 
     oracle = function(spec, v)
-        if isPure(spec) then
+        if isPure(spec) and not independent(spec) then
             return cached(pureSchemas, spec, function(x) return x end):is(v), v
         end
         local chain = spec.chain or {}

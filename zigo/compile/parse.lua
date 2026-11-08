@@ -8,6 +8,8 @@ local emit, describe = closures.emit, closures.describe
 local inBounds, checkBounds = closures.inBounds, closures.checkBounds
 local isSequence, holeFree = closures.isSequence, closures.holeFree
 local reportUnknownKeys, indexGet = closures.reportUnknownKeys, closures.indexGet
+local gotValue, copyList, keyRank = closures.gotValue, closures.copyList, closures.keyRank
+local collectKeys, reportExotic, emitUnion = closures.collectKeys, closures.reportExotic, closures.emitUnion
 local type, next, rawget, tostring, tonumber = type, next, rawget, tostring, tonumber
 local find = string.find
 local huge = math.huge
@@ -153,16 +155,199 @@ structural.array = function(self)
     end
 end
 
-local function needsStructure(self)
-    local d = self.d
-    if self.kind == "object" then
-        if d.strip then return true end
-        for i = 1, #d.children do
-            if not d.children[i].pure then return true end
+structural.union = function(self)
+    local variants = self.d.variants
+    local n = #variants
+    local kids = {}
+    for i = 1, n do kids[i] = variants[i]._parse end
+    return function(v, ctx, depth)
+        if not ctx.collect then
+            for i = 1, n do
+                local ok, out = kids[i](v, ctx, depth)
+                if ok then return true, out end
+            end
+            return false
         end
+        local saved = ctx.issues
+        local lists = {}
+        for i = 1, n do
+            ctx.issues = nil
+            local ok, out = kids[i](v, ctx, depth)
+            if ok then
+                ctx.issues = saved
+                return true, out
+            end
+            lists[i] = ctx.issues or {}
+        end
+        ctx.issues = emitUnion(saved, ctx.path, depth, lists)
         return false
     end
+end
+
+structural.discriminatedUnion = function(self)
+    local d = self.d
+    local key, values, variants = d.key, d.values, d.variants
+    local get = d.meta and indexGet or rawget
+    local map = {}
+    for i = 1, #values do map[values[i]] = variants[i]._parse end
+    return function(v, ctx, depth)
+        if type(v) ~= "table" then
+            return fail(ctx, depth, "invalid_type", "object", describe(v))
+        end
+        local x = get(v, key)
+        local parseVariant = map[x]
+        if parseVariant == nil then
+            if ctx.collect then
+                local nd = depth + 1
+                ctx.path[nd] = key
+                ctx.issues = emit(ctx.issues, ctx.path, nd, "invalid_union_discriminator", copyList(values), gotValue(x))
+            end
+            return false
+        end
+        return parseVariant(v, ctx, depth)
+    end
+end
+
+structural.tuple = function(self)
+    local d = self.d
+    local items, meta = d.items, d.meta
+    local count = #items
+    local kids = {}
+    for i = 1, count do kids[i] = items[i]._parse end
+    local rest = d.rest and d.rest._parse
+    local get = meta and indexGet or rawget
+    return function(v, ctx, depth)
+        if type(v) ~= "table" then
+            return fail(ctx, depth, "invalid_type", "tuple", describe(v))
+        end
+        local n, sequence
+        if meta then
+            n = #v
+            sequence = holeFree(v, n)
+        else
+            n = rawlen(v)
+            sequence = isSequence(v, n)
+        end
+        if not sequence then
+            return fail(ctx, depth, "invalid_array", "sequence", "table")
+        end
+        local collect = ctx.collect
+        local path = ctx.path
+        local ok = true
+        if n > count and not rest then
+            if not collect then return false end
+            ctx.issues = emit(ctx.issues, path, depth, "too_big", count, n, "array")
+            ok = false
+        end
+        local out = {}
+        local nd = depth + 1
+        for i = 1, count do
+            if collect then path[nd] = i end
+            local cok, cv = kids[i](get(v, i), ctx, nd)
+            if cok then
+                out[i] = cv
+            elseif collect then
+                ok = false
+            else
+                return false
+            end
+        end
+        if rest then
+            for i = count + 1, n do
+                if collect then path[nd] = i end
+                local cok, cv = rest(get(v, i), ctx, nd)
+                if cok then
+                    out[i] = cv
+                elseif collect then
+                    ok = false
+                else
+                    return false
+                end
+            end
+        end
+        if not ok then return false end
+        return true, out
+    end
+end
+
+structural.record = function(self)
+    local d = self.d
+    local keyTest, keyCheck = d.key._test, d.key._check
+    local value = d.value._parse
+    return function(v, ctx, depth)
+        if type(v) ~= "table" then
+            return fail(ctx, depth, "invalid_type", "record", describe(v))
+        end
+        local out = {}
+        local nd = depth + 1
+        if not ctx.collect then
+            for k, x in next, v do
+                if not keyRank[type(k)] or not keyTest(k) then return false end
+                local ok, cv = value(x, ctx, nd)
+                if not ok then return false end
+                out[k] = cv
+            end
+            return true, out
+        end
+        local path = ctx.path
+        local list, n, exotic = collectKeys(v)
+        local ok = true
+        for i = 1, n do
+            local k = list[i]
+            path[nd] = k
+            if not keyTest(k) then
+                ctx.issues = keyCheck(k, path, nd, ctx.issues)
+                ok = false
+            end
+            local cok, cv = value(rawget(v, k), ctx, nd)
+            if cok then
+                out[k] = cv
+            else
+                ok = false
+            end
+        end
+        if exotic then
+            ctx.issues = reportExotic(exotic, path, depth, ctx.issues)
+            ok = false
+        end
+        if not ok then return false end
+        return true, out
+    end
+end
+
+local function allPure(list)
+    for i = 1, #list do
+        if not list[i].pure then return false end
+    end
+    return true
+end
+
+local needing = {}
+
+needing.object = function(d)
+    return d.strip == true or not allPure(d.children)
+end
+
+needing.array = function(d)
     return not d.item.pure
+end
+
+needing.tuple = function(d)
+    return not allPure(d.items) or (d.rest ~= nil and not d.rest.pure)
+end
+
+needing.record = function(d)
+    return not d.value.pure
+end
+
+needing.union = function(d)
+    return not allPure(d.variants)
+end
+
+needing.discriminatedUnion = needing.union
+
+local function needsStructure(self)
+    return needing[self.kind](self.d)
 end
 
 local function twinOf(self)

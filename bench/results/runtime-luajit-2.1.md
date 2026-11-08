@@ -1,7 +1,7 @@
 # zigo bench — `luajit-2.1`
 
 **Runtime** : Lua 5.1 / LuaJIT 2.1.1727870382
-**Generated** : 2026-11-08 16:52
+**Generated** : 2026-11-08 19:14
 **Config** : 30 samples, 200 warmup, 50ms calibration target
 
 > [!IMPORTANT]
@@ -36,59 +36,67 @@ scenario, so ratios stay accurate even on LuaJIT.
 
 | benchmark | mean | alloc | gc | rate | min..max | p50/p99 | vs base |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| `hand-written if-chain` | 1 ns | 0 B | 0/30 | 767.66 M/s | 1 ns..1 ns | 1 ns/1 ns | _(base)_ |
-| `zigo codegen` | 1 ns | 0 B | 0/30 | 779.02 M/s | 1 ns..1 ns | 1 ns/1 ns | tie |
-| `zigo closures` | 2 ns | 0 B | 0/30 | 647.53 M/s | 1 ns..2 ns | 2 ns/2 ns | 1.19× slower |
+| `hand-written if-chain` | 1 ns | 0 B | 0/30 | 742.21 M/s | 1 ns..2 ns | 1 ns/2 ns | _(base)_ |
+| `zigo codegen` | 1 ns | 0 B | 0/30 | 692.20 M/s | 1 ns..2 ns | 1 ns/2 ns | 1.07× slower |
+| `zigo closures` | 2 ns | 0 B | 0/30 | 555.66 M/s | 2 ns..2 ns | 2 ns/2 ns | 1.34× slower |
 
 ## S2 reference schema (7 fields, nested object, array, enum, optional) - valid inputs
 
 | benchmark | mean | alloc | gc | rate | min..max | p50/p99 | vs base |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| `hand-written if-chain` | 43 ns | 0 B | 0/30 | 23.31 M/s | 42 ns..45 ns | 43 ns/45 ns | _(base)_ |
-| `zigo codegen` | 45 ns | 0 B | 0/30 | 22.33 M/s | 44 ns..47 ns | 45 ns/46 ns | tie |
-| `zigo closures` | 291 ns | 0 B | 0/30 | 3.44 M/s | 283 ns..305 ns | 290 ns/302 ns | 6.78× slower |
+| `hand-written if-chain` | 61 ns | 1 B | 0/30 | 16.48 M/s | 43 ns..90 ns | 59 ns/82 ns | _(base)_ |
+| `zigo codegen` | 63 ns | 1 B | 0/30 | 15.86 M/s | 44 ns..74 ns | 64 ns/73 ns | tie |
+| `zigo closures` | 272 ns | 0 B | 0/30 | 3.68 M/s | 229 ns..334 ns | 268 ns/323 ns | 4.48× slower |
 
 ## S3 nesting depth 8 - valid inputs
 
 | benchmark | mean | alloc | gc | rate | min..max | p50/p99 | vs base |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| `hand-written if-chain` | 56 ns | 0 B | 0/30 | 17.88 M/s | 51 ns..77 ns | 52 ns/76 ns | _(base)_ |
-| `zigo codegen` | 57 ns | 0 B | 0/30 | 17.67 M/s | 49 ns..72 ns | 53 ns/71 ns | tie |
-| `zigo closures` | 367 ns | 0 B | 0/30 | 2.73 M/s | 316 ns..470 ns | 345 ns/468 ns | 6.56× slower |
+| `hand-written if-chain` | 92 ns | 0 B | 0/30 | 10.89 M/s | 81 ns..106 ns | 91 ns/102 ns | _(base)_ |
+| `zigo codegen` | 80 ns | 1 B | 0/30 | 12.47 M/s | 69 ns..96 ns | 79 ns/93 ns | 1.15× faster |
+| `zigo closures` | 601 ns | 0 B | 0/30 | 1.66 M/s | 510 ns..740 ns | 595 ns/690 ns | 6.54× slower |
 
 ## S4 array of 1000 objects - valid inputs
 
 | benchmark | mean | alloc | gc | rate | min..max | p50/p99 | vs base |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| `hand-written if-chain` | 7.23 µs | 2 B | 0/30 | 138.25 K/s | 5.30 µs..9.80 µs | 6.90 µs/9.40 µs | _(base)_ |
-| `zigo codegen` | 4.97 µs | 2 B | 0/30 | 201.29 K/s | 4.51 µs..7.24 µs | 4.69 µs/7.08 µs | 1.46× faster |
-| `zigo closures` | 69.60 µs | 2 B | 0/30 | 14.37 K/s | 63.00 µs..101.00 µs | 67.00 µs/89.00 µs | 9.62× slower |
+| `hand-written if-chain` | 5.54 µs | 2 B | 0/30 | 180.61 K/s | 4.40 µs..7.00 µs | 5.55 µs/6.80 µs | _(base)_ |
+| `zigo codegen` | 5.73 µs | 2 B | 0/30 | 174.60 K/s | 4.67 µs..9.23 µs | 5.33 µs/7.07 µs | tie |
+| `zigo closures` | 121.67 µs | 2 B | 0/30 | 8.22 K/s | 94.00 µs..146.00 µs | 123.50 µs/144.00 µs | 21.97× slower |
+
+## S5 discriminatedUnion, 10 variants - valid inputs
+
+| benchmark | mean | alloc | gc | rate | min..max | p50/p99 | vs base |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `hand-written if-chain` | 34 ns | 0 B | 0/30 | 29.04 M/s | 32 ns..40 ns | 34 ns/39 ns | _(base)_ |
+| `zigo codegen` | 39 ns | 0 B | 0/30 | 25.56 M/s | 36 ns..47 ns | 39 ns/46 ns | 1.14× slower |
+| `zigo closures` | 144 ns | 0 B | 0/30 | 6.94 M/s | 133 ns..170 ns | 141 ns/168 ns | 4.19× slower |
 
 ## Union of 10 variants - valid inputs
 
 | benchmark | mean | alloc | gc | rate | min..max | p50/p99 | vs base |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| `U0 hand-written if/elseif` | 38 ns | 0 B | 0/30 | 26.52 M/s | 32 ns..56 ns | 34 ns/55 ns | _(base)_ |
-| `U1 closures, sequential` | 59 ns | 0 B | 0/30 | 16.84 M/s | 56 ns..64 ns | 59 ns/63 ns | 1.58× slower |
-| `U2 codegen + hash on kind` | 40 ns | 0 B | 0/30 | 25.28 M/s | 38 ns..42 ns | 40 ns/41 ns | tie |
-| `U3 matchigo compile (shapes)` | 281 ns | 0 B | 0/30 | 3.55 M/s | 274 ns..294 ns | 280 ns/291 ns | 7.46× slower |
-| `U4 matchigo fast-path + codegen` | 48 ns | 0 B | 0/30 | 20.67 M/s | 47 ns..50 ns | 48 ns/49 ns | 1.28× slower |
+| `U0 hand-written if/elseif` | 46 ns | 0 B | 0/30 | 21.80 M/s | 40 ns..56 ns | 43 ns/55 ns | _(base)_ |
+| `U1 closures, sequential` | 93 ns | 0 B | 0/30 | 10.75 M/s | 74 ns..112 ns | 93 ns/108 ns | 2.03× slower |
+| `U2 codegen + hash on kind` | 63 ns | 2 B | 0/30 | 15.86 M/s | 46 ns..76 ns | 65 ns/75 ns | 1.37× slower |
+| `U3 matchigo compile (shapes)` | 323 ns | 0 B | 0/30 | 3.09 M/s | 283 ns..399 ns | 313 ns/363 ns | 7.05× slower |
+| `U4 matchigo fast-path + codegen` | 69 ns | 2 B | 0/30 | 14.40 M/s | 56 ns..83 ns | 70 ns/78 ns | 1.51× slower |
 
 ## Union of 10 variants - mixed inputs
 
 | benchmark | mean | alloc | gc | rate | min..max | p50/p99 | vs base |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| `U0 hand-written if/elseif` | 33 ns | 0 B | 0/30 | 30.21 M/s | 32 ns..35 ns | 33 ns/34 ns | _(base)_ |
-| `U1 closures, sequential` | 69 ns | 0 B | 0/30 | 14.44 M/s | 60 ns..94 ns | 65 ns/86 ns | 2.09× slower |
-| `U2 codegen + hash on kind` | 39 ns | 0 B | 0/30 | 25.34 M/s | 39 ns..40 ns | 39 ns/40 ns | 1.19× slower |
-| `U3 matchigo compile (shapes)` | 333 ns | 0 B | 0/30 | 3.00 M/s | 317 ns..421 ns | 326 ns/387 ns | 10.07× slower |
-| `U4 matchigo fast-path + codegen` | 49 ns | 0 B | 0/30 | 20.59 M/s | 47 ns..51 ns | 48 ns/50 ns | 1.47× slower |
+| `U0 hand-written if/elseif` | 49 ns | 0 B | 0/30 | 20.46 M/s | 42 ns..63 ns | 46 ns/60 ns | _(base)_ |
+| `U1 closures, sequential` | 104 ns | 0 B | 0/30 | 9.62 M/s | 88 ns..120 ns | 104 ns/120 ns | 2.13× slower |
+| `U2 codegen + hash on kind` | 62 ns | 0 B | 0/30 | 16.12 M/s | 52 ns..74 ns | 60 ns/71 ns | 1.27× slower |
+| `U3 matchigo compile (shapes)` | 378 ns | 0 B | 0/30 | 2.65 M/s | 333 ns..430 ns | 376 ns/429 ns | 7.73× slower |
+| `U4 matchigo fast-path + codegen` | 71 ns | 0 B | 0/30 | 14.17 M/s | 61 ns..90 ns | 69 ns/83 ns | 1.44× slower |
 
 ## S8 impure schema (default, transform, strip) - valid inputs
 
 | benchmark | mean | alloc | gc | rate | min..max | p50/p99 | vs base |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| `hand-written copy` | 214 ns | 349 B | 0/30 | 4.67 M/s | 203 ns..231 ns | 213 ns/222 ns | _(base)_ |
-| `zigo safeParse (_parse)` | 460 ns | 428 B | 0/30 | 2.18 M/s | 445 ns..486 ns | 458 ns/477 ns | 2.15× slower |
-| `zigo is (_parse, no result kept)` | 472 ns | 428 B | 0/30 | 2.12 M/s | 453 ns..502 ns | 471 ns/499 ns | 2.21× slower |
+| `hand-written copy` | 311 ns | 348 B | 0/30 | 3.22 M/s | 237 ns..451 ns | 290 ns/437 ns | _(base)_ |
+| `zigo safeParse (_parse)` | 788 ns | 432 B | 0/30 | 1.27 M/s | 580 ns..1.02 µs | 795 ns/910 ns | 2.54× slower |
+| `zigo is (_parse, no result kept)` | 675 ns | 476 B | 0/30 | 1.48 M/s | 470 ns..880 ns | 685 ns/850 ns | 2.17× slower |
 

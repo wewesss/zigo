@@ -15,6 +15,9 @@ local MODULES = {
     { req = "zigo.types.array", file = "zigo/types/array.lua", var = "_M_array" },
     { req = "zigo.types.object", file = "zigo/types/object.lua", var = "_M_object" },
     { req = "zigo.types.coerce", file = "zigo/types/coerce.lua", var = "_M_coerce" },
+    { req = "zigo.types.tuple", file = "zigo/types/tuple.lua", var = "_M_tuple" },
+    { req = "zigo.types.record", file = "zigo/types/record.lua", var = "_M_record" },
+    { req = "zigo.types.union", file = "zigo/types/union.lua", var = "_M_union" },
 }
 
 local reqToVar = {}
