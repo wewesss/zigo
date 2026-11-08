@@ -1,0 +1,9 @@
+{
+  "$schema": "https://raw.githubusercontent.com/LuaLS/vscode-lua/master/setting/schema.json",
+  "runtime.version": "LuaJIT",
+  "runtime.builtin": { "ffi": "enable", "jit": "enable" },
+  "diagnostics.globals": ["jit"],
+  "diagnostics.disable": ["deprecated", "redundant-value", "inject-field", "duplicate-set-field", "cast-local-type", "need-check-nil", "undefined-field", "param-type-mismatch"],
+  "workspace.library": ["types"],
+  "workspace.ignoreDir": ["matchigo-lua", "dist", ".lua"]
+}
