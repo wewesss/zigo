@@ -295,7 +295,8 @@ Scénarios :
 
 ## 10. Décisions ouvertes
 
-- [ ] Nom définitif : `zigo` (namespace `v`) ou `zigo` (namespace `z`, clin d'œil direct à Zod). Vérifier la disponibilité sur LuaRocks, npm et GitHub avant de réserver. Convention de famille : un namespace d'une lettre par lib (`m`/`P` matchigo, `v` ou `z` ici)
+- [x] Nom : `zigo` (décidé le 2026-11-08, remplace validigo)
+- [ ] Namespace : `v` ou `z` (clin d'œil à Zod). Convention de famille : une lettre par lib (`m`/`P` matchigo). Vérifier la disponibilité de `zigo` sur LuaRocks avant de réserver
 - [ ] Défaut des clés inconnues : `passthrough` (proposé) ou `strict`
 - [ ] `integer()` accepte-t-il `3.0` en 5.3+ par défaut ?
 - [ ] Messages d'erreur : FR et EN intégrés, ou format seul et i18n laissée à l'utilisateur ?
