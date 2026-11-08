@@ -22,7 +22,7 @@ return function(z, b)
                 end
             end
 
-            local key = f.name:match("^(S%d)"):lower()
+            local key = f.name:match("^(S%d+)"):lower()
             for _, set in ipairs(sets) do
                 local setKey = set.key and (key .. "." .. set.key) or key
                 local variants = {

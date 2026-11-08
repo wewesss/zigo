@@ -2,6 +2,7 @@ local compat = require("zigo.util.compat")
 local nodeLib = require("zigo.node")
 
 local mathType = compat.mathType
+local isInt64, utf8Length = compat.isInt64, compat.utf8Length
 local rawlen = compat.rawlen
 local huge = math.huge
 local type, next, rawget = type, next, rawget
@@ -229,13 +230,51 @@ testBuilders.string = function(d)
     end
 end
 
-checkBuilders.string = function(d)
+local function stringCheck(kind)
+    return function(d)
+        local min, max, len = d.min, d.max, d.len
+        return function(v, path, depth, errs)
+            if type(v) ~= "string" then
+                return emit(errs, path, depth, "invalid_type", kind, describe(v))
+            end
+            return checkBounds(#v, min, max, len, kind, errs, path, depth)
+        end
+    end
+end
+
+checkBuilders.string = stringCheck("string")
+testBuilders.bytes = testBuilders.string
+checkBuilders.bytes = stringCheck("bytes")
+
+local function utf8Within(d)
+    local min, max, len = d.min, d.max, d.len
+    if not (min or max or len) then
+        return function(s) return utf8Length(s) ~= nil end
+    end
+    return function(s)
+        local n = utf8Length(s)
+        return n ~= nil and inBounds(n, min, max, len)
+    end
+end
+
+testBuilders.utf8 = function(d)
+    local within = utf8Within(d)
+    return function(v)
+        return type(v) == "string" and within(v)
+    end
+end
+
+checkBuilders.utf8 = function(d)
     local min, max, len = d.min, d.max, d.len
     return function(v, path, depth, errs)
         if type(v) ~= "string" then
-            return emit(errs, path, depth, "invalid_type", "string", describe(v))
+            return emit(errs, path, depth, "invalid_type", "utf8", describe(v))
         end
-        return checkBounds(#v, min, max, len, "string", errs, path, depth)
+        local n = utf8Length(v)
+        if n == nil then
+            return emit(errs, path, depth, "invalid_type", "utf8", "bytes")
+        end
+        return checkBounds(n, min, max, len, "utf8", errs, path, depth)
     end
 end
 
@@ -278,6 +317,61 @@ checkBuilders.integer = function(d)
             return emit(errs, path, depth, "invalid_type", "integer", got)
         end
         return checkBounds(v, min, max, nil, "integer", errs, path, depth)
+    end
+end
+
+local fixedInts = {
+    { "u8", 0, 255 },
+    { "u16", 0, 65535 },
+    { "u32", 0, 4294967295 },
+    { "i8", -128, 127 },
+    { "i16", -32768, 32767 },
+    { "i32", -2147483648, 2147483647 },
+}
+
+local function fixedBounds(d)
+    local lo, hi = d.typeMin, d.typeMax
+    local min, max = d.min, d.max
+    if min and min > lo then lo = min end
+    if max and max < hi then hi = max end
+    return lo, hi
+end
+
+for i = 1, #fixedInts do
+    local name = fixedInts[i][1]
+    testBuilders[name] = function(d)
+        local lo, hi = fixedBounds(d)
+        local strict = d.strict
+        return function(v)
+            return isIntegerValue(v, strict) and v >= lo and v <= hi
+        end
+    end
+    checkBuilders[name] = function(d)
+        local lo, hi = fixedBounds(d)
+        local strict = d.strict
+        return function(v, path, depth, errs)
+            if not isIntegerValue(v, strict) then
+                local got = describe(v)
+                if got == "number" then got = "float" end
+                return emit(errs, path, depth, "invalid_type", name, got)
+            end
+            return checkBounds(v, lo, hi, nil, "integer", errs, path, depth)
+        end
+    end
+end
+
+testBuilders.int64 = function()
+    return function(v) return isInt64(v) end
+end
+
+checkBuilders.int64 = function()
+    return function(v, path, depth, errs)
+        if not isInt64(v) then
+            local got = describe(v)
+            if got == "number" then got = "float" end
+            return emit(errs, path, depth, "invalid_type", "int64", got)
+        end
+        return errs
     end
 end
 
@@ -783,6 +877,9 @@ checkBuilders.record = function(d, lim)
     end
 end
 
+M.fixedInts = fixedInts
+M.fixedBounds = fixedBounds
+M.utf8Within = utf8Within
 M.emit = emit
 M.full = full
 M.describe = describe

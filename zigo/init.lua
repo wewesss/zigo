@@ -4,6 +4,9 @@ local closures = require("zigo.compile.closures")
 local codegen = require("zigo.compile.codegen")
 local parse = require("zigo.compile.parse")
 local primitives = require("zigo.types.primitives")
+local fixed = require("zigo.types.fixed")
+local int64 = require("zigo.types.int64")
+local boundary = require("zigo.types.boundary")
 local array = require("zigo.types.array")
 local object = require("zigo.types.object")
 local coerce = require("zigo.types.coerce")
@@ -16,7 +19,9 @@ local limits = require("zigo.limits")
 local leafKinds = {
     string = true, number = true, integer = true, boolean = true, literal = true,
     enum = true, any = true, unknown = true, never = true,
+    int64 = true, bytes = true, utf8 = true,
 }
+for _, spec in ipairs(closures.fixedInts) do leafKinds[spec[1]] = true end
 
 node.setCompiler("_limits", function(self)
     return limits.resolve(self)
@@ -69,11 +74,14 @@ local function config(opts)
     return out
 end
 
-return {
+local api = {
     _VERSION = "0.0.0",
     string = primitives.string,
     number = primitives.number,
     integer = primitives.integer,
+    int64 = int64.int64,
+    bytes = boundary.bytes,
+    utf8 = boundary.utf8,
     boolean = primitives.boolean,
     literal = primitives.literal,
     enum = primitives.enum,
@@ -100,3 +108,11 @@ return {
     setMessages = errors.setMessages,
     _isGenerated = codegen.isGenerated,
 }
+
+for _, spec in ipairs(closures.fixedInts) do
+    local name = spec[1]
+    api[name] = fixed[name]
+    api.coerce[name] = coerce[name]
+end
+
+return api

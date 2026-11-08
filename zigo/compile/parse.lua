@@ -46,6 +46,13 @@ end
 coercers.number = toNumber
 coercers.integer = toNumber
 
+for _, spec in ipairs(closures.fixedInts) do coercers[spec[1]] = toNumber end
+
+coercers.int64 = function(v)
+    if type(v) ~= "string" then return true, v end
+    return compat.parseInt64(v)
+end
+
 coercers.boolean = function(v)
     if v == true or v == "true" or v == 1 or v == "1" then return true, true end
     if v == false or v == "false" or v == 0 or v == "0" then return true, false end
@@ -430,11 +437,12 @@ local function buildBase(self, lim)
     if not coerce then return inner end
     local expected = self.kind
     return function(v, ctx, depth)
-        local ok, converted = coerce(v)
+        local ok, value, limit, got, typ = coerce(v)
         if not ok then
+            if value ~= nil then return fail(ctx, depth, value, limit, got, typ) end
             return fail(ctx, depth, "invalid_type", expected, describe(v))
         end
-        return inner(converted, ctx, depth)
+        return inner(value, ctx, depth)
     end
 end
 

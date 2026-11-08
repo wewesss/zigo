@@ -144,6 +144,9 @@ function TupleNode:rest(schema) end
 ---@class zigo.IntegerOptions
 ---@field strict? boolean
 
+---@class zigo.Int64Options
+---@field fromString? boolean parse decimal strings into the fixed int64 form of the runtime (native integer on 5.3+, int64_t cdata on LuaJIT, number up to 2^53 otherwise)
+
 ---@class zigo.ContainerOptions
 ---@field meta? boolean
 
@@ -163,6 +166,30 @@ function Coerce.boolean() end
 ---@return zigo.SizedNode
 function Coerce.string() end
 
+---@param opts? zigo.IntegerOptions
+---@return zigo.SizedNode
+function Coerce.u8(opts) end
+
+---@param opts? zigo.IntegerOptions
+---@return zigo.SizedNode
+function Coerce.u16(opts) end
+
+---@param opts? zigo.IntegerOptions
+---@return zigo.SizedNode
+function Coerce.u32(opts) end
+
+---@param opts? zigo.IntegerOptions
+---@return zigo.SizedNode
+function Coerce.i8(opts) end
+
+---@param opts? zigo.IntegerOptions
+---@return zigo.SizedNode
+function Coerce.i16(opts) end
+
+---@param opts? zigo.IntegerOptions
+---@return zigo.SizedNode
+function Coerce.i32(opts) end
+
 ---@class zigo
 ---@field _VERSION string
 ---@field coerce zigo.Coerce
@@ -178,6 +205,40 @@ function zigo.number() end
 ---@param opts? zigo.IntegerOptions
 ---@return zigo.SizedNode
 function zigo.integer(opts) end
+
+---@param opts? zigo.IntegerOptions
+---@return zigo.SizedNode
+function zigo.u8(opts) end
+
+---@param opts? zigo.IntegerOptions
+---@return zigo.SizedNode
+function zigo.u16(opts) end
+
+---@param opts? zigo.IntegerOptions
+---@return zigo.SizedNode
+function zigo.u32(opts) end
+
+---@param opts? zigo.IntegerOptions
+---@return zigo.SizedNode
+function zigo.i8(opts) end
+
+---@param opts? zigo.IntegerOptions
+---@return zigo.SizedNode
+function zigo.i16(opts) end
+
+---@param opts? zigo.IntegerOptions
+---@return zigo.SizedNode
+function zigo.i32(opts) end
+
+---@param opts? zigo.Int64Options
+---@return zigo.Node
+function zigo.int64(opts) end
+
+---@return zigo.SizedNode same checks as string(), named to state the intent
+function zigo.bytes() end
+
+---@return zigo.SizedNode strict RFC 3629 UTF-8; min, max and len count characters
+function zigo.utf8() end
 
 ---@return zigo.Node
 function zigo.boolean() end

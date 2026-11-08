@@ -15,6 +15,23 @@ return function(env)
     local huge = math.huge
     local nan = 0 / 0
     local unpack = table.unpack or unpack
+    local loader = loadstring or load
+
+    local ffi
+    if jit then
+        local okFfi, lib = pcall(require, "ffi")
+        if okFfi then ffi = lib end
+    end
+    local nativeInt = math.type ~= nil and math.maxinteger ~= nil and math.maxinteger > 2 ^ 53
+
+    local fixedRanges = {
+        u8 = { 0, 255 }, u16 = { 0, 65535 }, u32 = { 0, 4294967295 },
+        i8 = { -128, 127 }, i16 = { -32768, 32767 }, i32 = { -2147483648, 2147483647 },
+    }
+    local fixedNames = { "u8", "u16", "u32", "i8", "i16", "i32" }
+    local p4aKinds = { "u8", "u16", "u32", "i8", "i16", "i32", "int64", "bytes", "utf8" }
+    local p4aSet = {}
+    for _, k in ipairs(p4aKinds) do p4aSet[k] = true end
 
     local state = SEED
     local function reseed(s) state = s end
@@ -73,8 +90,13 @@ return function(env)
         return lo, hi
     end
 
-    local function genMods(kind, integerOnly)
-        local pool = integerOnly and intPool or numPool
+    local function fixedPool(kind)
+        local lo, hi = fixedRanges[kind][1], fixedRanges[kind][2]
+        return { lo - 1, lo, lo + 1, -1, 0, 1, 2, hi - 1, hi, hi + 1 }
+    end
+
+    local function genMods(kind, integerOnly, custom)
+        local pool = custom or (integerOnly and intPool or numPool)
         local mods = {}
         local count = rand(4) - 1
         for _ = 1, count do
@@ -94,12 +116,16 @@ return function(env)
     local leafKinds = {
         "string", "string", "string", "number", "number", "integer", "integer", "integer",
         "boolean", "boolean", "literal", "literal", "enum", "enum", "any", "unknown", "never",
+        "u8", "u16", "u32", "i8", "i16", "i32", "int64", "int64", "bytes", "utf8", "utf8",
     }
 
     local function leafSpec(kind)
         local spec = { kind = kind }
-        if kind == "string" then
+        if kind == "string" or kind == "bytes" or kind == "utf8" then
             spec.mods = genMods("string", true)
+        elseif fixedRanges[kind] then
+            spec.strict = chance(25)
+            spec.mods = genMods("integer", false, fixedPool(kind))
         elseif kind == "number" then
             spec.mods = genMods("number", false)
         elseif kind == "integer" then
@@ -122,7 +148,7 @@ return function(env)
         return spec
     end
 
-    local recordKeyKinds = { "string", "string", "integer", "number", "enum", "boolean", "any", "literal" }
+    local recordKeyKinds = { "string", "string", "integer", "number", "enum", "boolean", "any", "literal", "u8", "utf8" }
     local discriminantKeys = { "kind", "type", "t", "\0d", "]]" }
     local discriminantValues = { "a", "b", "c", "", 1, 2, 2.5, true, false }
 
@@ -275,6 +301,10 @@ return function(env)
         if kind == "string" then n = z.string()
         elseif kind == "number" then n = z.number()
         elseif kind == "integer" then n = z.integer(spec.strict and { strict = true } or nil)
+        elseif fixedRanges[kind] then n = z[kind](spec.strict and { strict = true } or nil)
+        elseif kind == "int64" then n = z.int64()
+        elseif kind == "bytes" then n = z.bytes()
+        elseif kind == "utf8" then n = z.utf8()
         elseif kind == "boolean" then n = z.boolean()
         elseif kind == "literal" then n = z.literal(spec.value)
         elseif kind == "enum" then n = z.enum(spec.values)
@@ -332,6 +362,123 @@ return function(env)
     }
     local function junk() return pick(junkMakers)() end
 
+    local codePoints = {
+        0, 0x41, 0x7F, 0x80, 0xE9, 0x7FF, 0x800, 0x20AC, 0xD7FF, 0xE000, 0xFFFD, 0xFFFF, 0x10000, 0x1F600, 0x10FFFF,
+    }
+    local badUtf8 = {
+        "\128", "\191", "\192\128", "\193\191", "\224\128\128", "\224\159\191", "\240\128\128\128",
+        "\240\143\191\191", "\237\160\128", "\237\175\191", "\237\176\128", "\237\191\191", "\244\144\128\128",
+        "\245\128\128\128", "\248\136\128\128\128", "\252\132\128\128\128\128", "\254", "\255",
+        "\194", "\226\130", "\240\159\152", "\194A", "\226\130A", "\240\159\152A", "\226A\172",
+    }
+
+    local function encodeChar(cp)
+        if cp < 0x80 then return string.char(cp) end
+        if cp < 0x800 then
+            return string.char(0xC0 + math.floor(cp / 64), 0x80 + cp % 64)
+        end
+        if cp < 0x10000 then
+            return string.char(0xE0 + math.floor(cp / 4096), 0x80 + math.floor(cp / 64) % 64, 0x80 + cp % 64)
+        end
+        return string.char(0xF0 + math.floor(cp / 262144), 0x80 + math.floor(cp / 4096) % 64,
+            0x80 + math.floor(cp / 64) % 64, 0x80 + cp % 64)
+    end
+
+    local int64Edges = nil
+    local function edgesOfInt64()
+        if int64Edges then return int64Edges end
+        local list = {
+            0, 1, -1, 3.0, -0.0, 2 ^ 53, -(2 ^ 53), 2 ^ 53 - 1, 2 ^ 53 + 2, -(2 ^ 53) - 2, 2 ^ 53 + 1,
+            2 ^ 62, 2 ^ 63, -(2 ^ 63), 2 ^ 64, 2.5, nan, huge, -huge, 1e300, "1", "9007199254740993", true, {},
+        }
+        if nativeInt then
+            list[#list + 1] = math.maxinteger
+            list[#list + 1] = math.mininteger
+            list[#list + 1] = loader("return 9007199254740993")()
+            list[#list + 1] = loader("return -9007199254740993")()
+            list[#list + 1] = loader("return 9007199254740992")()
+            list[#list + 1] = loader("return 9007199254740991")()
+            list[#list + 1] = loader("return 9007199254740994")()
+        end
+        if ffi then
+            local i64 = function(x) return ffi.new("int64_t", x) end
+            local u64 = function(x) return ffi.new("uint64_t", x) end
+            list[#list + 1] = i64(0)
+            list[#list + 1] = i64(1)
+            list[#list + 1] = i64(-1)
+            list[#list + 1] = loader("return 1LL")()
+            list[#list + 1] = loader("return 9007199254740993LL")()
+            list[#list + 1] = loader("return -9007199254740993LL")()
+            list[#list + 1] = loader("return 9223372036854775807LL")()
+            list[#list + 1] = loader("return -9223372036854775807LL - 1")()
+            list[#list + 1] = u64(0)
+            list[#list + 1] = u64(1)
+            list[#list + 1] = loader("return 1ULL")()
+            list[#list + 1] = loader("return 18446744073709551615ULL")()
+            list[#list + 1] = ffi.new("int32_t", 5)
+            list[#list + 1] = ffi.new("double", 5)
+            list[#list + 1] = ffi.new("int64_t[1]", 5)
+            list[#list + 1] = ffi.cast("void *", 0)
+        end
+        int64Edges = list
+        return list
+    end
+
+    local function lengthOf(spec, fallback)
+        local lo, hi, len = 0, nil, nil
+        for _, m in ipairs(spec.mods) do
+            if m[1] == "min" then lo = m[2]
+            elseif m[1] == "max" then hi = m[2]
+            elseif m[1] == "len" then len = m[2]
+            else lo, hi = m[2], m[3] end
+        end
+        local n
+        if len and chance(70) then n = len + (chance(70) and 0 or (chance(50) and -1 or 1))
+        else n = lo - 1 + rand(math.max(1, (hi or lo + fallback) - lo + 3)) - 1 end
+        if n < 0 then n = 0 end
+        return n
+    end
+
+    local function genFixed(spec)
+        local range = fixedRanges[spec.kind]
+        local cands = { range[1], range[2], range[1] - 1, range[2] + 1, 0, 1, -1, 3, range[1] + 1, range[2] - 1 }
+        for _, m in ipairs(spec.mods) do
+            for i = 2, 3 do
+                local b = m[i]
+                if b ~= nil and b == b and b ~= huge and b ~= -huge then
+                    cands[#cands + 1] = b
+                    cands[#cands + 1] = b - 1
+                    cands[#cands + 1] = b + 1
+                end
+            end
+        end
+        local x = pick(cands)
+        local r = rand(24)
+        if r == 1 then return nan end
+        if r == 2 then return pick({ huge, -huge }) end
+        if r == 3 then return x + 0.5 end
+        if r == 4 then return pick({ 2 ^ 53, 2 ^ 63, 2 ^ 32, -(2 ^ 31) - 1 }) end
+        if r == 5 then return tostring(x) end
+        if r == 6 and ffi then return ffi.new("int64_t", x) end
+        if r <= 11 then return x + 0.0 end
+        return x
+    end
+
+    local function genUtf8(spec)
+        local n = lengthOf(spec, 4)
+        local parts = {}
+        for i = 1, n do parts[i] = encodeChar(pick(codePoints)) end
+        local s = table.concat(parts)
+        local r = rand(100)
+        if r <= 20 then
+            local at = rand(#s + 1)
+            s = s:sub(1, at - 1) .. pick(badUtf8) .. s:sub(at)
+        elseif r <= 28 and #s > 0 then
+            s = s:sub(1, #s - rand(2))
+        end
+        return s
+    end
+
     local function between(lo, hi)
         if lo ~= lo or hi ~= hi or lo == -huge or hi == huge then return 0 end
         return lo + (hi - lo) * (rand(1000) - 1) / 999
@@ -341,7 +488,25 @@ return function(env)
     genValid = function(spec)
         if (spec.optional or spec.default) and chance(25) then return nil end
         local kind = spec.kind
-        if kind == "string" then
+        if p4aSet[kind] then
+            if kind == "int64" then
+                if chance(15) then return junk() end
+                local edges = edgesOfInt64()
+                return edges[rand(#edges)]
+            elseif kind == "utf8" then
+                if chance(6) then return junk() end
+                return genUtf8(spec)
+            elseif kind == "bytes" then
+                if chance(6) then return junk() end
+                local chars = {}
+                for i = 1, lengthOf(spec, 4) do
+                    chars[i] = string.char(chance(40) and rand(256) - 1 or 96 + rand(5))
+                end
+                return table.concat(chars)
+            end
+            if chance(5) then return junk() end
+            return genFixed(spec)
+        elseif kind == "string" then
             local lo, hi, len = 0, nil, nil
             for _, m in ipairs(spec.mods) do
                 if m[1] == "min" then lo = m[2]
@@ -700,6 +865,7 @@ return function(env)
     end
 
     local newKinds = { tuple = true, record = true, union = true, dunion = true, lazy = true }
+    for _, k in ipairs(p4aKinds) do newKinds[k] = true end
 
     local function independent(spec)
         if newKinds[spec.kind] then return true end
@@ -893,7 +1059,93 @@ return function(env)
         union = oracleUnion, dunion = oracleDunion, lazy = oracleLazy,
     }
 
+    local function modBounds(spec)
+        local min, max, len
+        for _, m in ipairs(spec.mods or {}) do
+            if m[1] == "min" then min = m[2]
+            elseif m[1] == "max" then max = m[2]
+            elseif m[1] == "len" then len = m[2]
+            else min, max = m[2], m[3] end
+        end
+        return min, max, len
+    end
+
+    local function oracleFixed(spec, v)
+        local range = fixedRanges[spec.kind]
+        if type(v) ~= "number" or v ~= v or v == huge or v == -huge then return false end
+        if v ~= math.floor(v) then return false end
+        if spec.strict and math.type and math.type(v) ~= "integer" then return false end
+        if v < range[1] or v > range[2] then return false end
+        local min, max = modBounds(spec)
+        if min and v < min then return false end
+        if max and v > max then return false end
+        return true
+    end
+
+    local function oracleInt64(_, v)
+        if type(v) == "number" then
+            if v ~= v then return false end
+            if math.type and math.type(v) == "integer" then return true end
+            if v == huge or v == -huge then return false end
+            return v == math.floor(v) and v >= -(2 ^ 53) and v <= 2 ^ 53
+        end
+        if type(v) == "cdata" and ffi then return ffi.istype("int64_t", v) end
+        return false
+    end
+
+    local function oracleBytes(spec, v)
+        if type(v) ~= "string" then return false end
+        local min, max, len = modBounds(spec)
+        local n = #v
+        if (min and n < min) or (max and n > max) or (len and n ~= len) then return false end
+        return true
+    end
+
+    local sequencePatterns = {
+        "^[\194-\223][\128-\191]",
+        "^\224[\160-\191][\128-\191]",
+        "^[\225-\236][\128-\191][\128-\191]",
+        "^\237[\128-\159][\128-\191]",
+        "^[\238-\239][\128-\191][\128-\191]",
+        "^\240[\144-\191][\128-\191][\128-\191]",
+        "^[\241-\243][\128-\191][\128-\191][\128-\191]",
+        "^\244[\128-\143][\128-\191][\128-\191]",
+    }
+
+    local function countCharacters(s)
+        local i, n, size = 1, 0, #s
+        while i <= size do
+            if s:byte(i) < 128 then
+                i = i + 1
+            else
+                local stop
+                for _, pattern in ipairs(sequencePatterns) do
+                    local _, e = s:find(pattern, i)
+                    if e then stop = e break end
+                end
+                if not stop then return nil end
+                i = stop + 1
+            end
+            n = n + 1
+        end
+        return n
+    end
+
+    local function oracleUtf8(spec, v)
+        if type(v) ~= "string" then return false end
+        local n = countCharacters(v)
+        if n == nil then return false end
+        local min, max, len = modBounds(spec)
+        if (min and n < min) or (max and n > max) or (len and n ~= len) then return false end
+        return true
+    end
+
+    local leafOracles = { int64 = oracleInt64, bytes = oracleBytes, utf8 = oracleUtf8 }
+    for _, name in ipairs(fixedNames) do leafOracles[name] = oracleFixed end
+
     local function oracleBase(spec, v)
+        local leafOracle = leafOracles[spec.kind]
+        if leafOracle then return leafOracle(spec, v), v end
         local structured = structuredOracles[spec.kind]
         if structured then
             if needsStructure(spec) then return structured(spec, v) end
@@ -997,5 +1249,181 @@ return function(env)
         assertTrue(impure >= IMPURE_SCHEMAS / 5)
         assertTrue(accepted >= IMPURE_SCHEMAS / 2)
         assertTrue(rejected >= IMPURE_SCHEMAS / 2)
+    end)
+
+    local P4A_SEED = 20261111
+    local P4A_SCHEMAS = 500
+    local P4A_INPUTS = 40
+    local FROM_STRING_SEED = 20261112
+    local FROM_STRING_CASES = 6000
+
+    local function expectIssue(spec, v)
+        local kind = spec.kind
+        local min, max, len = modBounds(spec)
+        if fixedRanges[kind] then
+            local range = fixedRanges[kind]
+            local whole = type(v) == "number" and v == v and v ~= huge and v ~= -huge and v == math.floor(v)
+            if whole and spec.strict and math.type and math.type(v) ~= "integer" then whole = false end
+            if not whole then return "invalid_type" end
+            local lo, hi = range[1], range[2]
+            if min and min > lo then lo = min end
+            if max and max < hi then hi = max end
+            if v < lo then return "too_small", lo end
+            if v > hi then return "too_big", hi end
+            return nil
+        elseif kind == "int64" then
+            return "invalid_type"
+        end
+        local n
+        if kind == "bytes" then
+            if type(v) ~= "string" then return "invalid_type" end
+            n = #v
+        else
+            if type(v) ~= "string" then return "invalid_type" end
+            n = countCharacters(v)
+            if n == nil then return "invalid_type" end
+        end
+        if min and n < min then return "too_small", min end
+        if max and n > max then return "too_big", max end
+        if len and n ~= len then return n < len and "too_small" or "too_big", len end
+        return nil
+    end
+
+    test("fuzz: fixed-size integers, int64, bytes and utf8 follow the independent oracles", function()
+        reseed(P4A_SEED)
+        local cases, accepted, rejected = 0, 0, 0
+        for _, kind in ipairs(p4aKinds) do
+            for s = 1, P4A_SCHEMAS do
+                local spec = leafSpec(kind)
+                spec.optional = chance(20)
+                local gTest, cTest, cCheck = compileBoth(spec)
+                if not z._isGenerated(gTest) then
+                    error(("schema #%d fell back to closures: %s"):format(s, describe(spec)), 0)
+                end
+                for j = 1, P4A_INPUTS do
+                    local data = genValid(spec)
+                    local want
+                    if data == nil then want = spec.optional == true else want = leafOracles[kind](spec, data) end
+                    local okG, g = pcall(gTest, data)
+                    local okC, c = pcall(cTest, data)
+                    local okK, issues = pcall(cCheck, data, {}, 0, nil)
+                    if not (okG and okC and okK) or g ~= want or c ~= want or (issues == nil) ~= want then
+                        error(("oracle mismatch on schema #%d input #%d\nschema: %s\ndata: %s\n"
+                            .. "oracle=%s codegen=%s(%s) closures=%s(%s) check-clean=%s(%s)"):format(
+                            s, j, describe(spec), show(data), tostring(want), tostring(g), tostring(okG),
+                            tostring(c), tostring(okC), tostring(issues == nil), tostring(okK)), 0)
+                    end
+                    cases = cases + 1
+                    if want then
+                        accepted = accepted + 1
+                    else
+                        rejected = rejected + 1
+                        local code, limit = expectIssue(spec, data)
+                        local first = issues[1]
+                        if first.code ~= code or (limit ~= nil and first.expected ~= limit) then
+                            error(("issue mismatch on schema #%d input #%d\nschema: %s\ndata: %s\n"
+                                .. "oracle=%s(%s) got=%s(%s)"):format(
+                                s, j, describe(spec), show(data), tostring(code), tostring(limit),
+                                tostring(first.code), tostring(first.expected)), 0)
+                        end
+                    end
+                end
+            end
+        end
+        print(("fuzz p4a: %d cases, %d accepted, %d rejected"):format(cases, accepted, rejected))
+        assertEq(cases, #p4aKinds * P4A_SCHEMAS * P4A_INPUTS)
+        assertTrue(accepted >= #p4aKinds * P4A_SCHEMAS)
+        assertTrue(rejected >= #p4aKinds * P4A_SCHEMAS)
+    end)
+
+    local function digitsOnly(s)
+        local start = s:sub(1, 1) == "-" and 2 or 1
+        if #s < start then return false end
+        for i = start, #s do
+            local b = s:byte(i)
+            if b < 48 or b > 57 then return false end
+        end
+        return true
+    end
+
+    local function normalizedDecimal(s)
+        local negative = s:sub(1, 1) == "-"
+        local digits = negative and s:sub(2) or s
+        digits = digits:gsub("^0+", "")
+        if digits == "" then return "0", false, "0" end
+        return (negative and "-" or "") .. digits, negative, digits
+    end
+
+    local function fitsInt64(digits, negative)
+        if #digits < 19 then return true end
+        if #digits > 19 then return false end
+        return digits <= (negative and "9223372036854775808" or "9223372036854775807")
+    end
+
+    test("fuzz: int64 fromString agrees with an independent decimal comparison and keeps every digit", function()
+        reseed(FROM_STRING_SEED)
+        local schema = z.int64({ fromString = true })
+        local alphabet = { "0", "1", "2", "5", "9", "9", "9", "0", "-", "+", ".", " ", "e", "x" }
+        local edges = {
+            "0", "-0", "1", "-1", "9007199254740991", "9007199254740992", "9007199254740993",
+            "-9007199254740993", "9223372036854775806", "9223372036854775807", "9223372036854775808",
+            "-9223372036854775807", "-9223372036854775808", "-9223372036854775809", "18446744073709551615",
+            "18446744073709551616", "00000000000000000000009223372036854775807", ("9"):rep(400),
+            "999999999999999", "9999999999999999", "1000000000000000", "-999999999999999", "-1000000000000000",
+        }
+        local accepted, rejected = 0, 0
+        for i = 1, FROM_STRING_CASES do
+            local s
+            if i <= #edges then
+                s = edges[i]
+            elseif chance(70) then
+                local parts = {}
+                if chance(30) then parts[1] = "-" end
+                for _ = 1, rand(25) do parts[#parts + 1] = tostring(chance(35) and 9 or rand(10) - 1) end
+                s = table.concat(parts)
+            else
+                local parts = {}
+                for k = 1, rand(7) - 1 do parts[k] = pick(alphabet) end
+                s = table.concat(parts)
+            end
+            local ok, value, err = schema:safeParse(s)
+            local want, why = false, "invalid_type"
+            if digitsOnly(s) then
+                local text, negative, digits = normalizedDecimal(s)
+                if fitsInt64(digits, negative) then
+                    want = true
+                else
+                    why = negative and "too_small" or "too_big"
+                end
+                if ok then
+                    local shown = tostring(value):gsub("LL$", "")
+                    if shown ~= text then
+                        error(("fromString %q returned %s, expected %s"):format(s, shown, text), 0)
+                    end
+                end
+            end
+            if ok ~= want then
+                error(("fromString %q: verdict %s, oracle %s"):format(s, tostring(ok), tostring(want)), 0)
+            end
+            if ok then
+                accepted = accepted + 1
+                if ffi then
+                    assertTrue(ffi.istype("int64_t", value))
+                elseif nativeInt then
+                    assertEq(math.type(value), "integer")
+                end
+            else
+                rejected = rejected + 1
+                if err.issues[1].code ~= why then
+                    error(("fromString %q: code %s, oracle %s"):format(s, err.issues[1].code, why), 0)
+                end
+            end
+            if schema:is(s) ~= want then
+                error(("fromString %q: is() disagrees with safeParse"):format(s), 0)
+            end
+        end
+        print(("fuzz fromString: %d cases, %d accepted, %d rejected"):format(accepted + rejected, accepted, rejected))
+        assertTrue(accepted >= FROM_STRING_CASES / 10)
+        assertTrue(rejected >= FROM_STRING_CASES / 10)
     end)
 end
