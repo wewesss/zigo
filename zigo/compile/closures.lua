@@ -352,6 +352,15 @@ checkBuilders.array = function(d)
     end
 end
 
+M.emit = emit
+M.describe = describe
+M.inBounds = inBounds
+M.checkBounds = checkBounds
+M.isSequence = isSequence
+M.holeFree = holeFree
+M.reportUnknownKeys = reportUnknownKeys
+M.indexGet = indexGet
+
 function M.test(node)
     local build = testBuilders[node.kind]
     if not build then error("zigo: no test compiler for kind '" .. tostring(node.kind) .. "'", 2) end

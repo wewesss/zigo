@@ -14,7 +14,12 @@ node.defineKind("object", {
     end,
     methods = {
         strict = function(self)
-            return node.derive(self, { strict = true })
+            node.assertBase(self, "strict")
+            return node.derive(self, { strict = true, strip = false })
+        end,
+        strip = function(self)
+            node.assertBase(self, "strip")
+            return node.derive(self, { strip = true, strict = false })
         end,
     },
 })

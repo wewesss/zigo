@@ -48,6 +48,9 @@ M.messages = {
         if i.got then return "Unrecognized key of type " .. tostring(i.got) end
         return "Unrecognized key"
     end,
+    custom = function()
+        return "Invalid input"
+    end,
 }
 
 function M.setMessages(tbl)
@@ -67,6 +70,7 @@ local function render(handler, issue)
 end
 
 function M.messageOf(issue, override)
+    if issue.message ~= nil then return issue.message end
     local handler = override and override[issue.code] or M.messages[issue.code]
     if handler == nil then return issue.code end
     return render(handler, issue)
