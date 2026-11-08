@@ -44,6 +44,9 @@ jobs:
       - name: Run tests against the source tree
         run: lua tests/run.lua
 
+      - name: Run tests with codegen disabled
+        run: lua tests/run.lua --no-codegen
+
       - name: Build the bundled distribution
         run: lua build.lua
 
@@ -84,6 +87,10 @@ jobs:
 
       - name: Clone matchigo-lua (union bench dependency)
         run: git clone --depth 1 https://github.com/wewesss/matchigo-lua.git matchigo-lua
+
+      - name: Check performance budgets (informative)
+        continue-on-error: true
+        run: lua bench/budgets.lua
 
       - name: Run the bench (smoke configuration)
         run: lua bench/run.lua --fast

@@ -1,4 +1,8 @@
-local mode = arg and arg[1]
+local mode, noCodegen
+for _, a in ipairs(arg or {}) do
+    if a == "dist" then mode = "dist" end
+    if a == "--no-codegen" then noCodegen = true end
+end
 local z
 if mode == "dist" then
     z = dofile("dist/zigo.lua")
@@ -6,6 +10,8 @@ else
     package.path = "./?.lua;./?/init.lua;" .. package.path
     z = require("zigo")
 end
+
+if noCodegen then z.config({ codegen = false }) end
 
 local passed, failed = 0, 0
 local failures = {}
@@ -76,6 +82,8 @@ dofile("tests/errors_test.lua")(env)
 dofile("tests/immutability_test.lua")(env)
 dofile("tests/determinism_test.lua")(env)
 dofile("tests/traps_test.lua")(env)
+dofile("tests/codegen_test.lua")(env)
+dofile("tests/fuzz_test.lua")(env)
 dofile("tests/alloc_test.lua")(env)
 
 print(("\n%d passed, %d failed"):format(passed, failed))
