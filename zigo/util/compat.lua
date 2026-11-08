@@ -87,6 +87,7 @@ else
             if neg then return false, "too_small", -SAFE, n, "integer" end
             return false, "too_big", SAFE, n, "integer"
         end
+        if n == 0 then n = 0 end
         return true, n
     end
 end

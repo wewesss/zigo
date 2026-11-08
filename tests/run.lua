@@ -96,6 +96,8 @@ dofile("tests/utf8_test.lua")(env)
 dofile("tests/null_test.lua")(env)
 dofile("tests/native_test.lua")(env)
 dofile("tests/cdata_test.lua")(env)
+dofile("tests/types_test.lua")(env)
+dofile("tests/matchigo_test.lua")(env)
 dofile("tests/fuzz_test.lua")(env)
 dofile("tests/alloc_test.lua")(env)
 

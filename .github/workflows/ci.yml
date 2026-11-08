@@ -41,17 +41,26 @@ jobs:
           sudo ln -sf "${luajit_path}" /usr/local/bin/lua
           lua -v
 
+      - name: Clone matchigo-lua (integration test dependency)
+        run: git clone --depth 1 https://github.com/wewesss/matchigo-lua.git matchigo-lua
+
       - name: Run tests against the source tree
         run: lua tests/run.lua
+        env:
+          MATCHIGO_PATH: matchigo-lua
 
       - name: Run tests with codegen disabled
         run: lua tests/run.lua --no-codegen
+        env:
+          MATCHIGO_PATH: matchigo-lua
 
       - name: Build the bundled distribution
         run: lua build.lua
 
       - name: Run tests against the bundle
         run: lua tests/run.lua dist
+        env:
+          MATCHIGO_PATH: matchigo-lua
 
   bench-smoke:
     name: Bench smoke (${{ matrix.lua }})

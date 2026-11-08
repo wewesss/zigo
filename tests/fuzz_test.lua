@@ -1527,6 +1527,11 @@ return function(env)
     end
 
     local function fitsInt64(digits, negative)
+        if not (nativeInt or ffi) then
+            if #digits < 16 then return true end
+            if #digits > 16 then return false end
+            return digits <= "9007199254740992"
+        end
         if #digits < 19 then return true end
         if #digits > 19 then return false end
         return digits <= (negative and "9223372036854775808" or "9223372036854775807")
@@ -1568,7 +1573,12 @@ return function(env)
                     why = negative and "too_small" or "too_big"
                 end
                 if ok then
-                    local shown = tostring(value):gsub("LL$", "")
+                    local shown
+                    if type(value) == "number" and not (math.type and math.type(value) == "integer") then
+                        shown = ("%.0f"):format(value)
+                    else
+                        shown = tostring(value):gsub("LL$", "")
+                    end
                     if shown ~= text then
                         error(("fromString %q returned %s, expected %s"):format(s, shown, text), 0)
                     end
