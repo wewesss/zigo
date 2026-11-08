@@ -91,11 +91,14 @@ return function(env)
     end)
 
     test("a shared child compiles once and is reused by parents", function()
+        local previous = z.config().codegen
+        z.config({ codegen = false })
         local child = z.string()
         local a = z.object({ x = child })
         local b = z.array(child)
         assertEq(rawget(child, "_test"), nil)
         local _ = a._test, b._test
+        z.config({ codegen = previous })
         assertEq(type(rawget(child, "_test")), "function")
     end)
 

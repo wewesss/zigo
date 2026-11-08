@@ -8,6 +8,7 @@ local MODULES = {
     { req = "zigo.errors", file = "zigo/errors.lua", var = "_M_errors" },
     { req = "zigo.node", file = "zigo/node.lua", var = "_M_node" },
     { req = "zigo.compile.closures", file = "zigo/compile/closures.lua", var = "_M_closures" },
+    { req = "zigo.compile.codegen", file = "zigo/compile/codegen.lua", var = "_M_codegen" },
     { req = "zigo.types.primitives", file = "zigo/types/primitives.lua", var = "_M_primitives" },
     { req = "zigo.types.array", file = "zigo/types/array.lua", var = "_M_array" },
     { req = "zigo.types.object", file = "zigo/types/object.lua", var = "_M_object" },
