@@ -35,12 +35,48 @@ local function assertTrue(v)  if not v then error("expected truthy", 2) end end
 local function assertFalse(v) if v     then error("expected falsy",  2) end end
 local function assertThrows(fn) if pcall(fn) then error("expected throw", 2) end end
 
+local function deepEq(a, b)
+    if nanEq(a, b) then return true end
+    if type(a) ~= "table" or type(b) ~= "table" then return false end
+    for k, v in pairs(a) do
+        if not deepEq(v, b[k]) then return false end
+    end
+    for k in pairs(b) do
+        if a[k] == nil then return false end
+    end
+    return true
+end
+
+local function show(v)
+    if type(v) ~= "table" then return tostring(v) end
+    local keys = {}
+    for k in pairs(v) do keys[#keys + 1] = k end
+    table.sort(keys, function(x, y) return tostring(x) < tostring(y) end)
+    local parts = {}
+    for i = 1, #keys do parts[i] = tostring(keys[i]) .. "=" .. show(v[keys[i]]) end
+    return "{" .. table.concat(parts, ",") .. "}"
+end
+
+local function assertDeepEq(actual, expected)
+    if not deepEq(actual, expected) then
+        error(("expected %s, got %s"):format(show(expected), show(actual)), 2)
+    end
+end
+
 local env = {
     z = z, test = test, assertEq = assertEq, assertTrue = assertTrue,
     assertFalse = assertFalse, assertThrows = assertThrows,
+    assertDeepEq = assertDeepEq,
 }
 
 dofile("tests/smoke_test.lua")(env)
+dofile("tests/primitives_test.lua")(env)
+dofile("tests/object_array_test.lua")(env)
+dofile("tests/errors_test.lua")(env)
+dofile("tests/immutability_test.lua")(env)
+dofile("tests/determinism_test.lua")(env)
+dofile("tests/traps_test.lua")(env)
+dofile("tests/alloc_test.lua")(env)
 
 print(("\n%d passed, %d failed"):format(passed, failed))
 if failed > 0 then
