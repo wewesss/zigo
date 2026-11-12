@@ -202,8 +202,11 @@ local function depthGuard(ctx, s)
 end
 
 local function tableGuard(ctx, d, v)
-    add(ctx, "if type(" .. v .. ") ~= \"table\" then return false end")
-    if not d.meta then
+    local proven = v == "v" and ctx.proven
+    if not proven then
+        add(ctx, "if type(" .. v .. ") ~= \"table\" then return false end")
+    end
+    if not d.meta and not (proven and proven.raw) then
         add(ctx, "if getmetatable(" .. v .. ") ~= nil then return " .. slowCall(ctx) .. " end")
     end
 end
@@ -230,16 +233,19 @@ containers.object = function(ctx, d, v, s)
     depthGuard(ctx, s)
     tableGuard(ctx, d, v)
     local keys, children = d.keys, d.children
+    local proven = v == "v" and ctx.proven
     for i = 1, #keys do
-        local f = fresh(ctx, "f")
-        local mark = ctx.nl
-        add(ctx, "do local " .. f .. " = " .. v .. "[" .. quote(keys[i]) .. "]")
-        local opened = ctx.nl
-        gen(ctx, children[i], f, s + 1)
-        if ctx.nl == opened then
-            ctx.nl = mark
-        else
-            add(ctx, "end")
+        if not (proven and proven.raw and proven.key == keys[i]) then
+            local f = fresh(ctx, "f")
+            local mark = ctx.nl
+            add(ctx, "do local " .. f .. " = " .. v .. "[" .. quote(keys[i]) .. "]")
+            local opened = ctx.nl
+            gen(ctx, children[i], f, s + 1)
+            if ctx.nl == opened then
+                ctx.nl = mark
+            else
+                add(ctx, "end")
+            end
         end
     end
     if d.strict then
@@ -282,11 +288,11 @@ containers.array = function(ctx, d, v, s)
     add(ctx, "end")
 end
 
-local function variantTest(ctx, node)
+local function variantTest(ctx, node, proven)
     if node.d.limits ~= nil then
         return nodeLib.sub(node, ctx.dyn and "_testD" or "_test", ctx.lim)
     end
-    local fn = build(node, ctx.lim, ctx.dyn)
+    local fn = build(node, ctx.lim, ctx.dyn, proven)
     if not fn then error("zigo: codegen failed for a union variant") end
     return fn
 end
@@ -306,7 +312,8 @@ containers.discriminatedUnion = function(ctx, d, v, s)
         add(ctx, "if getmetatable(" .. v .. ") ~= nil then return " .. slowCall(ctx) .. " end")
     end
     local dispatch = {}
-    for i = 1, #d.values do dispatch[d.values[i]] = variantTest(ctx, d.variants[i]) end
+    local proven = { raw = not d.meta, key = d.key }
+    for i = 1, #d.values do dispatch[d.values[i]] = variantTest(ctx, d.variants[i], proven) end
     local t = fresh(ctx, "u")
     add(ctx, "do local " .. t .. " = " .. const(ctx, dispatch) .. "[" .. v .. "[" .. quote(d.key) .. "]]")
     add(ctx, "if " .. t .. " == nil or not " .. t .. "(" .. v .. dArg(ctx, s) .. ") then return false end end")
@@ -417,10 +424,13 @@ gen = function(ctx, node, v, s)
     if guard then add(ctx, "end") end
 end
 
-function build(node, lim, dyn)
+function build(node, lim, dyn, proven)
     local loader = loadstring or load
     if not loader then return nil end
-    local ctx = { lines = {}, nl = 0, consts = {}, nc = 0, index = {}, uid = 0, lim = lim, dyn = dyn, root = node }
+    local ctx = {
+        lines = {}, nl = 0, consts = {}, nc = 0, index = {}, uid = 0, lim = lim, dyn = dyn, root = node,
+        proven = proven,
+    }
     gen(ctx, node, "v", 0)
     local reference
     local function slow(root, D)
