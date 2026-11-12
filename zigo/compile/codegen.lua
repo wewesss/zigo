@@ -120,7 +120,7 @@ leaves.utf8 = function(ctx, d, v)
 end
 
 leaves.boolean = function(_, _, v)
-    return { "type(" .. v .. ") ~= \"boolean\"" }
+    return { "(" .. v .. " ~= true and " .. v .. " ~= false)" }
 end
 
 leaves.literal = function(ctx, d, v)
