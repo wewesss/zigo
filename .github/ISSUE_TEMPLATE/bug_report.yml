@@ -1,0 +1,88 @@
+name: Bug report
+description: Report a wrong verdict, a wrong error, or a crash in zigo.
+title: "[bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing, search existing issues. A minimal Lua reproduction is required: without it, the bug cannot be reproduced.
+        For a security problem (a schema bypass, limits not enforced, a crash on crafted input), do not file an issue: use private vulnerability reporting, see SECURITY.md.
+
+  - type: input
+    id: version
+    attributes:
+      label: zigo version or commit
+      description: "The value of z._VERSION, the release tag, or the commit hash of the build you tested."
+      placeholder: "1.0.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: runtime
+    attributes:
+      label: Lua runtime
+      options:
+        - Lua 5.1
+        - Lua 5.2
+        - Lua 5.3
+        - Lua 5.4
+        - LuaJIT 2.1
+        - Other (say which below)
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal Lua reproduction
+      description: >
+        A standalone snippet that reproduces the bug: the schema, the input, and the call.
+      value: |
+        local z = require("zigo")
+
+        local Schema = z.object({
+            name = z.string():min(1),
+        })
+
+        local ok, value, err = Schema:safeParse({ name = "" })
+        print(ok)
+      render: lua
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-actual
+    attributes:
+      label: Expected vs actual
+      description: >
+        What you expected, and what happened instead. Include the output of err:format() when an error is involved.
+      placeholder: |
+        Expected: false, then "name: Expected length of at least 1, got 0"
+        Actual: true
+    validations:
+      required: true
+
+  - type: dropdown
+    id: codegen
+    attributes:
+      label: Codegen
+      description: Does the bug also happen with z.config({ codegen = false })?
+      options:
+        - Happens with codegen on and off
+        - Happens with codegen on only
+        - Happens with codegen off only
+        - Not tested
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing issues and did not find a duplicate.
+          required: true
+        - label: The reproduction above runs on its own and uses only zigo.
+          required: true
