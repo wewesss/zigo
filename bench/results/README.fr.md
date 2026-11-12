@@ -20,3 +20,5 @@ lua bench/run.lua --fast   # run smoke
 ```
 
 Le scénario union lit matchigo-lua depuis `MATCHIGO_PATH` (défaut `./matchigo-lua`).
+
+Comparaison avec d'autres validateurs Lua (tableshape, lua-resty-ljsonschema, lshape) : [COMPARE.fr.md](./COMPARE.fr.md), lancée par `lua bench/compare.lua`. Elle lit les bibliothèques depuis `ZIGO_COMPARE_PATH` et écrit `compare-<runtime>.md`, qui n'est pas commité.
