@@ -71,24 +71,21 @@ function M.derive(source, changes)
     return M.new(source.kind, d)
 end
 
-local function diagnose(parse, v, cap)
-    local ctx = context.collect({ cap = cap }, nil)
-    parse(v, ctx, 0)
-    return ctx.issues or { { path = {}, code = "custom" } }
+local function impureRun(self, v)
+    local ctx = context.collect({ cap = self._limits.cap }, nil)
+    local ok, out = self._parse(v, ctx, 0)
+    if ok then return true, out end
+    return false, nil, errors.new(ctx.issues or { { path = {}, code = "custom" } })
 end
 
 local function impureSafeParse(self, v)
-    local parse = self._parse
-    local ok, out = parse(v, context.fast(), 0)
-    if ok then return true, out end
-    return false, nil, errors.new(diagnose(parse, v, self._limits.cap))
+    return impureRun(self, v)
 end
 
 local function impureParse(self, v)
-    local parse = self._parse
-    local ok, out = parse(v, context.fast(), 0)
+    local ok, out, err = impureRun(self, v)
     if ok then return out end
-    error(errors.new(diagnose(parse, v, self._limits.cap)), 2)
+    error(err, 2)
 end
 
 local function makeMeta(kind, methods)
