@@ -201,12 +201,22 @@ local function depthGuard(ctx, s)
     add(ctx, "if " .. at .. " >= " .. limitExpr(ctx, ctx.lim.maxDepth) .. " then return false end")
 end
 
+local function read(ctx, d, v, index)
+    if ctx.raw and not d.meta then return "rawget(" .. v .. ", " .. index .. ")" end
+    return v .. "[" .. index .. "]"
+end
+
+local function lengthOf(ctx, d, v)
+    if ctx.raw and not d.meta then return "rawlen(" .. v .. ")" end
+    return "#" .. v
+end
+
 local function tableGuard(ctx, d, v)
     local proven = v == "v" and ctx.proven
     if not proven then
         add(ctx, "if type(" .. v .. ") ~= \"table\" then return false end")
     end
-    if not d.meta and not (proven and proven.raw) then
+    if not d.meta and not ctx.raw and not (proven and proven.raw) then
         add(ctx, "if getmetatable(" .. v .. ") ~= nil then return " .. slowCall(ctx) .. " end")
     end
 end
@@ -238,7 +248,7 @@ containers.object = function(ctx, d, v, s)
         if not (proven and proven.raw and proven.key == keys[i]) then
             local f = fresh(ctx, "f")
             local mark = ctx.nl
-            add(ctx, "do local " .. f .. " = " .. v .. "[" .. quote(keys[i]) .. "]")
+            add(ctx, "do local " .. f .. " = " .. read(ctx, d, v, quote(keys[i])))
             local opened = ctx.nl
             gen(ctx, children[i], f, s + 1)
             if ctx.nl == opened then
@@ -269,7 +279,7 @@ containers.array = function(ctx, d, v, s)
     local n, i, e = fresh(ctx, "n"), fresh(ctx, "i"), fresh(ctx, "e")
     local conds = {}
     bounds(ctx, n, { min = d.min, max = closures.arrayMax(d, ctx.lim.maxKeys), len = d.len }, conds)
-    add(ctx, "local " .. n .. " = #" .. v)
+    add(ctx, "local " .. n .. " = " .. lengthOf(ctx, d, v))
     if #conds > 0 then
         add(ctx, "if " .. concat(conds, " or ") .. " then return false end")
     end
@@ -280,7 +290,7 @@ containers.array = function(ctx, d, v, s)
             .. " then return false end end")
         add(ctx, "if " .. c .. " ~= " .. n .. " then return false end")
     end
-    add(ctx, "for " .. i .. " = 1, " .. n .. " do local " .. e .. " = " .. v .. "[" .. i .. "]")
+    add(ctx, "for " .. i .. " = 1, " .. n .. " do local " .. e .. " = " .. read(ctx, d, v, i))
     if not rejectsNil(d.item) then
         add(ctx, "if " .. e .. " == nil then return false end")
     end
@@ -292,7 +302,7 @@ local function variantTest(ctx, node, proven)
     if node.d.limits ~= nil then
         return nodeLib.sub(node, ctx.dyn and "_testD" or "_test", ctx.lim)
     end
-    local fn = build(node, ctx.lim, ctx.dyn, proven)
+    local fn = build(node, ctx.lim, ctx.dyn, proven, ctx.raw)
     if not fn then error("zigo: codegen failed for a union variant") end
     return fn
 end
@@ -308,14 +318,14 @@ end
 
 containers.discriminatedUnion = function(ctx, d, v, s)
     add(ctx, "if type(" .. v .. ") ~= \"table\" then return false end")
-    if not d.meta then
+    if not d.meta and not ctx.raw then
         add(ctx, "if getmetatable(" .. v .. ") ~= nil then return " .. slowCall(ctx) .. " end")
     end
     local dispatch = {}
     local proven = { raw = not d.meta, key = d.key }
     for i = 1, #d.values do dispatch[d.values[i]] = variantTest(ctx, d.variants[i], proven) end
     local t = fresh(ctx, "u")
-    add(ctx, "do local " .. t .. " = " .. const(ctx, dispatch) .. "[" .. v .. "[" .. quote(d.key) .. "]]")
+    add(ctx, "do local " .. t .. " = " .. const(ctx, dispatch) .. "[" .. read(ctx, d, v, quote(d.key)) .. "]")
     add(ctx, "if " .. t .. " == nil or not " .. t .. "(" .. v .. dArg(ctx, s) .. ") then return false end end")
 end
 
@@ -325,7 +335,7 @@ containers.tuple = function(ctx, d, v, s)
     local items, rest = d.items, d.rest
     local count = #items
     local n = fresh(ctx, "n")
-    add(ctx, "local " .. n .. " = #" .. v)
+    add(ctx, "local " .. n .. " = " .. lengthOf(ctx, d, v))
     local limitN = closures.tupleMax(d, ctx.lim.maxKeys)
     if limitN then
         add(ctx, "if " .. n .. " > " .. limitExpr(ctx, limitN) .. " then return false end")
@@ -338,11 +348,11 @@ containers.tuple = function(ctx, d, v, s)
         add(ctx, "if " .. c .. " ~= " .. n .. " then return false end")
     end
     local hole = fresh(ctx, "i")
-    add(ctx, "for " .. hole .. " = 1, " .. n .. " do if " .. v .. "[" .. hole .. "] == nil then return false end end")
+    add(ctx, "for " .. hole .. " = 1, " .. n .. " do if " .. read(ctx, d, v, hole) .. " == nil then return false end end")
     for i = 1, count do
         local f = fresh(ctx, "f")
         local mark = ctx.nl
-        add(ctx, "do local " .. f .. " = " .. v .. "[" .. i .. "]")
+        add(ctx, "do local " .. f .. " = " .. read(ctx, d, v, i))
         local opened = ctx.nl
         gen(ctx, items[i], f, s + 1)
         if ctx.nl == opened then
@@ -354,7 +364,7 @@ containers.tuple = function(ctx, d, v, s)
     if rest then
         local i, e = fresh(ctx, "i"), fresh(ctx, "e")
         local mark = ctx.nl
-        add(ctx, "for " .. i .. " = " .. (count + 1) .. ", " .. n .. " do local " .. e .. " = " .. v .. "[" .. i .. "]")
+        add(ctx, "for " .. i .. " = " .. (count + 1) .. ", " .. n .. " do local " .. e .. " = " .. read(ctx, d, v, i))
         local opened = ctx.nl
         gen(ctx, rest, e, s + 1)
         if ctx.nl == opened then
@@ -424,20 +434,26 @@ gen = function(ctx, node, v, s)
     if guard then add(ctx, "end") end
 end
 
-function build(node, lim, dyn, proven)
+function build(node, lim, dyn, proven, raw)
     local loader = loadstring or load
     if not loader then return nil end
     local ctx = {
         lines = {}, nl = 0, consts = {}, nc = 0, index = {}, uid = 0, lim = lim, dyn = dyn, root = node,
-        proven = proven,
+        proven = proven, raw = raw,
     }
     gen(ctx, node, "v", 0)
     local reference
     local function slow(root, D)
-        if not reference then reference = closures.test(node, lim, dyn) end
+        if not reference then
+            if not raw then
+                local ok, twin = pcall(build, node, lim, dyn, nil, true)
+                if ok and twin then reference = twin end
+            end
+            if not reference then reference = closures.test(node, lim, dyn) end
+        end
         return reference(root, D)
     end
-    local head = { "local KT, type, next, getmetatable, mathType, slow, istype, I64, rawequal = ..." }
+    local head = { "local KT, type, next, getmetatable, mathType, slow, istype, I64, rawequal, rawget, rawlen = ..." }
     local inline = ctx.nc < MAX_INLINE_CONSTS and ctx.nc or MAX_INLINE_CONSTS
     if inline > 0 then
         local names, values = {}, {}
@@ -456,7 +472,7 @@ function build(node, lim, dyn, proven)
     local src = concat(head, "\n") .. "\n" .. body .. "\nreturn true\nend"
     local chunk = loader(src, "=zigo.codegen")
     if not chunk then return nil end
-    return chunk(ctx.consts, type, next, getmetatable, mathType, slow, compat.istype, compat.int64Type, rawequal)
+    return chunk(ctx.consts, type, next, getmetatable, mathType, slow, compat.istype, compat.int64Type, rawequal, rawget, compat.rawlen)
 end
 
 function M.test(node, lim, dyn)
