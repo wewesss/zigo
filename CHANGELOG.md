@@ -17,8 +17,17 @@ First stable release. Lua 5.1, 5.2, 5.3, 5.4 and LuaJIT 2.1, zero dependency.
 
 ### Fixed
 
+- `transform`, `refine`, `default` functions, `pipe` targets and `ctx:addIssue` callbacks ran twice on invalid input, because the diagnostic pass parsed the value again; every callback now runs at most once per `parse` / `safeParse` call, with codegen on or off (`tests/impure_test.lua`).
 - `int64({ fromString = true })` on Lua 5.1 and 5.2 returned `-0` for the string `"-0"`; it now returns `0`.
 - The fuzz oracle for `int64` `fromString` now uses the 2^53 bound on runtimes without native 64-bit integers, and compares plain-number results with `%.0f` instead of `tostring`.
+
+### Performance
+
+- `schema:safeParse`, `:parse` and `:is` are cached on the node instance, so a call no longer goes through the `__index` function (about 14% faster on a pure object on Lua 5.4).
+- Generated code tests booleans by identity instead of `type()` (140 ns to 76 ns on an object of five booleans, Lua 5.4) and checks the key type of a `record` once (615 ns to 487 ns on a `record(string, number)` of 8 keys, Lua 5.4).
+- Generated discriminated unions no longer repeat in the variant the table test and the discriminator check the wrapper already did (147 ns to 105 ns for 4 variants, Lua 5.4).
+- Tables with a metatable are validated by a generated raw twin of the schema instead of the closures (an array of 4 metatabled rows: 2300 ns to 1700 ns on Lua 5.4, 280 ns to 60 ns on LuaJIT); `tests/metatable_test.lua` compares both implementations on a fixed-seed fuzz.
+- Impure schemas reuse their parse context between calls (a scalar `transform`: 325 ns to 170 ns, an impure object: 2060 ns to 1650 ns on Lua 5.4). The `ctx` passed to callbacks is valid only during the call.
 
 ### Documentation
 

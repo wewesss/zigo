@@ -41,6 +41,26 @@ function M.fast()
     return setmetatable({ collect = false, count = 0, depth = 0 }, meta)
 end
 
+local free
+
+function M.acquire(cap)
+    local ctx = free
+    if ctx then
+        free = nil
+        ctx.path.cap = cap
+        return ctx
+    end
+    return setmetatable({ collect = true, count = 0, path = { cap = cap }, depth = 0 }, meta)
+end
+
+function M.release(ctx)
+    ctx.issues = nil
+    ctx.count = 0
+    ctx.depth = 0
+    ctx.collect = true
+    free = ctx
+end
+
 function M.collect(path, issues)
     return setmetatable({ collect = true, count = 0, path = path, depth = 0, issues = issues }, meta)
 end

@@ -549,7 +549,7 @@ local _, _, bad = Port:safeParse("x")
 print(bad:format()) --> <root>: not a number
 ```
 
-Two traps. `fn` is called as `fn(value, ctx)`: a function that reads a second argument, such as `tonumber`, must be wrapped. And a `transform` must be free of side effects, because after a failure the diagnostic pass can call it again.
+Two points. `fn` is called as `fn(value, ctx)`: a function that reads a second argument, such as `tonumber`, must be wrapped. And each callback (`transform`, `refine`, a `default` function) runs at most once per `parse` or `safeParse` call, valid input or not; the `ctx` it receives is only valid during that call, so do not keep it.
 
 ### pipe
 

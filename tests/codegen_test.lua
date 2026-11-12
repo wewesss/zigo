@@ -303,4 +303,91 @@ return function(env)
         sameVerdict(function() return z.array(z.integer(), { meta = true }) end, values)
         sameVerdict(function() return z.array(z.never()) end, values)
     end)
+
+    test("codegen: record keys of every kind match closures on mixed key types", function()
+        local fn = function() end
+        local sentinel = {}
+        local mixed = listOf(
+            {}, { a = 1 }, { [1] = 1 }, { [true] = 1 }, { [false] = 1 }, { [1.5] = 1 }, { [-3] = 1 },
+            { [{}] = 1 }, { [fn] = 1 }, { a = 1, [2] = 1 }, { a = 1, [true] = 1 }, { [""] = 1 }, { ab = 1 },
+            { [{}] = 1, a = 1 }, { a = "x" }, { [sentinel] = 1 }, { [2 ^ 40] = 1 }, { [300] = 1 }, { [-200] = 1 }, 5, "x", nil
+        )
+        local keys = {
+            function() return z.string() end, function() return z.string():min(2) end,
+            function() return z.bytes() end, function() return z.utf8() end,
+            function() return z.number() end, function() return z.integer() end,
+            function() return z.i8() end, function() return z.u8() end,
+            function() return z.boolean() end, function() return z.any() end, function() return z.unknown() end,
+            function() return z.literal("a") end, function() return z.enum({ "a", "ab", 1 }) end,
+            function() return z.union(z.string(), z.number()) end,
+            function() return z.string():optional() end, function() return z.number():nullable(sentinel) end,
+        }
+        for i = 1, #keys do
+            local key = keys[i]
+            sameVerdict(function() return z.record(key(), z.any()) end, mixed)
+            sameVerdict(function() return z.record(key(), z.number()) end, mixed)
+        end
+    end)
+
+    test("codegen: discriminated unions match closures, plain and metatabled inputs", function()
+        local function proxy(fields, inherited)
+            return setmetatable(fields, { __index = inherited })
+        end
+        local function inputs()
+            return listOf(
+                { kind = "a", x = 1 }, { kind = "a", x = "no" }, { kind = "a" }, { kind = "b", name = "n" },
+                { kind = "b", name = 5 }, { kind = "b", name = "n", extra = 1 }, { kind = "c" }, { kind = 1 },
+                { kind = 1.0, n = 2 }, { kind = 2, n = 2 }, { kind = true, flag = 1 }, { x = 1 }, {}, 5, "a", nil,
+                proxy({}, { kind = "a", x = 1 }), proxy({ kind = "a" }, { x = 1 }), proxy({ kind = "b" }, { name = "n" }),
+                proxy({ kind = "b", name = "n" }, {}), proxy({ kind = "a", x = 1 }, {}), proxy({ x = 1 }, { kind = "zz" }),
+                proxy({ kind = "a", x = 1, y = 1 }, { z = 1 })
+            )
+        end
+        local shapes = {
+            function(meta)
+                local opts = meta and { meta = true } or nil
+                return z.discriminatedUnion("kind",
+                    z.object({ kind = z.literal("a"), x = z.number() }, opts),
+                    z.object({ kind = z.literal("b"), name = z.string() }, opts))
+            end,
+            function(meta)
+                local opts = meta and { meta = true } or nil
+                return z.discriminatedUnion("kind",
+                    z.object({ kind = z.literal("a"), x = z.number() }, opts):strict(),
+                    z.object({ kind = z.literal("b"), name = z.string() }, opts))
+            end,
+            function(meta)
+                local opts = meta and { meta = true } or nil
+                return z.discriminatedUnion("kind",
+                    z.object({ kind = z.literal(1), n = z.number() }, opts),
+                    z.object({ kind = z.literal(true), flag = z.number() }, opts))
+            end,
+            function(meta)
+                return z.discriminatedUnion("kind",
+                    z.object({ kind = z.literal("a"), x = z.number() }, meta and { meta = true } or nil),
+                    z.object({ kind = z.literal("b"), name = z.string() }))
+            end,
+            function(meta)
+                local opts = meta and { meta = true } or nil
+                return z.object({
+                    inner = z.array(z.discriminatedUnion("kind",
+                        z.object({ kind = z.literal("a"), x = z.number() }, opts),
+                        z.object({ kind = z.literal("b"), name = z.string() }, opts))),
+                })
+            end,
+        }
+        for i = 1, #shapes do
+            for _, meta in ipairs({ false, true }) do
+                sameVerdict(function() return shapes[i](meta) end, inputs())
+                sameVerdict(function()
+                    return z.object({ u = shapes[i](meta), tail = z.string():optional() })
+                end, (function()
+                    local wrapped = inputs()
+                    for j = 1, wrapped.n do wrapped[j] = { u = wrapped[j] } end
+                    wrapped.n = wrapped.n
+                    return wrapped
+                end)())
+            end
+        end
+    end)
 end

@@ -365,4 +365,21 @@ return function(env)
         end
         assertTrue(best < 0.5)
     end)
+
+    test("cdata: a boolean cdata is not a Lua boolean, generated or not", function()
+        local values = { n = 6, ffi.new("bool", true), ffi.new("bool", false), true, false, 1, "true" }
+        sameVerdict(function() return z.boolean() end, values)
+        sameVerdict(function() return z.object({ a = z.boolean(), b = z.boolean():optional() }) end, {
+            n = 3,
+            { a = ffi.new("bool", true) }, { a = true, b = ffi.new("bool", false) }, { a = false, b = true },
+        })
+        for _, flag in ipairs({ true, false }) do
+            withCodegen(flag, function()
+                local S = z.boolean()
+                assertFalse(S:is(ffi.new("bool", true)))
+                assertFalse(S:is(ffi.new("bool", false)))
+                assertTrue(S:is(true)); assertTrue(S:is(false))
+            end)
+        end
+    end)
 end

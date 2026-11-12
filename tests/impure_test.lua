@@ -546,4 +546,217 @@ return function(env)
         assertTrue(z.isError(err))
         assertTrue(#err.issues >= 1)
     end)
+
+    local function withCodegen(flag, fn)
+        local previous = z.config().codegen
+        z.config({ codegen = flag })
+        local ok, err = pcall(fn)
+        z.config({ codegen = previous })
+        if not ok then error(err, 0) end
+    end
+
+    local function counted()
+        local c = { n = 0 }
+        function c.bump(v) c.n = c.n + 1 return v end
+        function c.pass(v) c.n = c.n + 1 return true end
+        function c.fail(v) c.n = c.n + 1 return false end
+        function c.add(v, ctx) c.n = c.n + 1 ctx:addIssue({ message = "bad" }) return v end
+        function c.make() c.n = c.n + 1 return "d" end
+        return c
+    end
+
+    local function eachCodegen(name, build)
+        for _, flag in ipairs({ true, false }) do
+            test(name .. (flag and " (codegen)" or " (closures)"), function()
+                withCodegen(flag, function() build(flag) end)
+            end)
+        end
+    end
+
+    eachCodegen("callbacks run once: transform, valid and invalid input", function()
+        local c = counted()
+        local S = z.object({
+            bad = z.string():transform(c.bump),
+            ok = z.string():transform(c.bump),
+            wrong = z.number(),
+        })
+        local good = { bad = "a", ok = "b", wrong = 1 }
+        assertTrue((S:safeParse(good))); assertEq(c.n, 2)
+        c.n = 0
+        assertTrue(pcall(S.parse, S, good)); assertEq(c.n, 2)
+        c.n = 0
+        local ok = S:safeParse({ bad = "a", ok = "b", wrong = "x" })
+        assertFalse(ok); assertEq(c.n, 2)
+        c.n = 0
+        assertFalse(pcall(S.parse, S, { bad = "a", ok = "b", wrong = "x" })); assertEq(c.n, 2)
+    end)
+
+    eachCodegen("callbacks run once: refine, valid and invalid input", function()
+        local c = counted()
+        local P = z.string():refine(c.pass)
+        local F = z.string():refine(c.fail)
+        assertTrue((P:safeParse("a"))); assertEq(c.n, 1)
+        c.n = 0
+        assertFalse((F:safeParse("a"))); assertEq(c.n, 1)
+        c.n = 0
+        assertFalse(pcall(F.parse, F, "a")); assertEq(c.n, 1)
+        c.n = 0
+        assertTrue(pcall(P.parse, P, "a")); assertEq(c.n, 1)
+    end)
+
+    eachCodegen("callbacks run once: ctx:addIssue from transform and refine", function()
+        local c = counted()
+        local T = z.string():transform(c.add)
+        local R = z.string():refine(function(v, ctx) c.n = c.n + 1 ctx:addIssue({ message = "r" }) return true end)
+        local ok, _, err = T:safeParse("a")
+        assertFalse(ok); assertEq(c.n, 1); assertEq(err.issues[1].message, "bad")
+        c.n = 0
+        ok, _, err = R:safeParse("a")
+        assertFalse(ok); assertEq(c.n, 1); assertEq(err.issues[1].message, "r")
+        c.n = 0
+        assertFalse(pcall(T.parse, T, "a")); assertEq(c.n, 1)
+    end)
+
+    eachCodegen("callbacks run once: default function and pipe", function()
+        local c = counted()
+        local D = z.object({ a = z.string():default(c.make), b = z.number() })
+        assertTrue((D:safeParse({ b = 1 }))); assertEq(c.n, 1)
+        c.n = 0
+        local ok, _, err = D:safeParse({ b = "x" })
+        assertFalse(ok); assertEq(c.n, 1); assertEq(#err.issues, 1)
+        c.n = 0
+        assertFalse(pcall(D.parse, D, { b = "x" })); assertEq(c.n, 1)
+        c.n = 0
+        local P = z.string():transform(c.bump):pipe(z.string():min(3):refine(c.fail))
+        assertFalse((P:safeParse("abcd"))); assertEq(c.n, 2)
+        c.n = 0
+        assertFalse((P:safeParse("ab"))); assertEq(c.n, 1)
+    end)
+
+    eachCodegen("callbacks run once: nested in object, array and union", function()
+        local c = counted()
+        local Item = z.object({ n = z.number():refine(c.fail, { message = "no" }) })
+        local S = z.object({ list = z.array(Item), tag = z.string():transform(c.bump) })
+        local ok, _, err = S:safeParse({ list = { { n = 1 }, { n = 2 } }, tag = "t" })
+        assertFalse(ok); assertEq(c.n, 3); assertEq(#err.issues, 2)
+        c.n = 0
+        local U = z.union(z.number():refine(c.fail), z.string():refine(c.pass))
+        assertTrue((U:safeParse("s"))); assertEq(c.n, 1)
+        c.n = 0
+        assertFalse((U:safeParse(5))); assertEq(c.n, 1)
+        c.n = 0
+        assertFalse(pcall(U.parse, U, 5)); assertEq(c.n, 1)
+        c.n = 0
+        local W = z.object({ u = U, t = z.string():transform(c.bump) })
+        assertFalse((W:safeParse({ u = 5, t = "x" }))); assertEq(c.n, 2)
+        c.n = 0
+        assertTrue((W:safeParse({ u = "s", t = "x" }))); assertEq(c.n, 2)
+    end)
+
+    eachCodegen("callbacks run once: a pure sibling failing does not repeat an impure one", function()
+        local c = counted()
+        local S = z.array(z.object({ a = z.string():transform(c.bump), b = z.integer() }))
+        local ok = S:safeParse({ { a = "x", b = 1 }, { a = "y", b = "no" }, { a = "z", b = 3 } })
+        assertFalse(ok); assertEq(c.n, 3)
+    end)
+
+    test("context reuse: a parse started inside a callback leaves the outer one intact", function()
+        local innerErr
+        local inner = z.object({ n = z.string():transform(upper) })
+        local outer = z.object({
+            a = z.string():transform(function(v)
+                local ok, _, err = inner:safeParse({ n = 5 })
+                assertFalse(ok)
+                innerErr = err
+                return v
+            end),
+            b = z.number(),
+        })
+        local ok, _, err = outer:safeParse({ a = "x", b = "no" })
+        assertFalse(ok)
+        assertEq(err:format(), "b: Expected number, got string")
+        assertEq(innerErr:format(), "n: Expected string, got number")
+        local good, value = outer:safeParse({ a = "x", b = 1 })
+        assertTrue(good); assertEq(value.a, "x")
+    end)
+
+    test("context reuse: an issue recorded before a nested parse survives it", function()
+        local inner = z.object({ n = z.string():transform(upper) })
+        local outer = z.object({
+            a = z.number(),
+            b = z.string():transform(function(v)
+                local ok = inner:safeParse({ n = 5 })
+                assertFalse(ok)
+                return v
+            end),
+            c = z.string():refine(function() return false end, { message = "late" }),
+        })
+        local ok, _, err = outer:safeParse({ a = "no", b = "x", c = "y" })
+        assertFalse(ok)
+        assertEq(err:format(), "a: Expected number, got string\nc: late")
+    end)
+
+    test("context reuse: a callback that raises leaves later parses correct", function()
+        local S = z.object({
+            a = z.string():transform(function(v)
+                if v == "boom" then error("boom", 0) end
+                return v
+            end),
+            b = z.integer(),
+        })
+        local ok, err = pcall(S.safeParse, S, { a = "boom", b = 1 })
+        assertFalse(ok); assertEq(err, "boom")
+        local _, _, bad = S:safeParse({ a = "ok", b = "x" })
+        assertEq(bad:format(), "b: Expected integer, got string")
+        assertTrue((S:safeParse({ a = "ok", b = 1 })))
+        local raised, e = pcall(S.parse, S, { a = "boom", b = 1 })
+        assertFalse(raised); assertEq(e, "boom")
+        assertTrue(pcall(S.parse, S, { a = "ok", b = 1 }))
+    end)
+
+    test("context reuse: a raise inside an abort-early union does not leave collection off", function()
+        local U = z.union(
+            z.string():transform(function(v)
+                if v == "boom" then error("boom", 0) end
+                return v
+            end),
+            z.number()
+        )
+        local S = z.object({ u = U, w = z.string():transform(function(v) return v end) }):limits({ abortEarly = true })
+        local ok, err = pcall(S.safeParse, S, { u = "boom", w = "x" })
+        assertFalse(ok); assertEq(err, "boom")
+        local _, _, e1 = S:safeParse({ u = true, w = "x" })
+        assertEq(e1.issues[1].code, "invalid_union")
+        assertDeepEq(e1.issues[1].path, { "u" })
+        local _, _, e2 = S:safeParse({ u = 1, w = 5 })
+        assertDeepEq(e2.issues[1].path, { "w" })
+    end)
+
+    test("context reuse: the issues of one failure are not touched by the next parse", function()
+        local S = z.object({
+            a = z.string():refine(function() return false end, { message = "first" }),
+            b = z.string():refine(function() return false end, { message = "second" }),
+        })
+        local _, _, e1 = S:safeParse({ a = "x", b = "y" })
+        local before = e1:format()
+        local _, _, e2 = S:safeParse({ a = "x", b = "y" })
+        assertEq(e1:format(), before)
+        assertEq(#e1.issues, 2)
+        assertTrue(e1.issues ~= e2.issues)
+        assertTrue(e1.issues[1].path ~= e2.issues[1].path)
+    end)
+
+    test("context reuse: the issue cap of each schema is honoured when contexts are shared", function()
+        local function two() return z.object({
+            a = z.string():refine(function() return false end),
+            b = z.string():refine(function() return false end),
+        }) end
+        local capped, open = two():limits({ abortEarly = true }), two()
+        for _ = 1, 3 do
+            local _, _, e1 = capped:safeParse({ a = "x", b = "y" })
+            local _, _, e2 = open:safeParse({ a = "x", b = "y" })
+            assertEq(#e1.issues, 1)
+            assertEq(#e2.issues, 2)
+        end
+    end)
 end
