@@ -303,4 +303,29 @@ return function(env)
         sameVerdict(function() return z.array(z.integer(), { meta = true }) end, values)
         sameVerdict(function() return z.array(z.never()) end, values)
     end)
+
+    test("codegen: record keys of every kind match closures on mixed key types", function()
+        local fn = function() end
+        local sentinel = {}
+        local mixed = listOf(
+            {}, { a = 1 }, { [1] = 1 }, { [true] = 1 }, { [false] = 1 }, { [1.5] = 1 }, { [-3] = 1 },
+            { [{}] = 1 }, { [fn] = 1 }, { a = 1, [2] = 1 }, { a = 1, [true] = 1 }, { [""] = 1 }, { ab = 1 },
+            { [{}] = 1, a = 1 }, { a = "x" }, { [sentinel] = 1 }, { [2 ^ 40] = 1 }, { [300] = 1 }, { [-200] = 1 }, 5, "x", nil
+        )
+        local keys = {
+            function() return z.string() end, function() return z.string():min(2) end,
+            function() return z.bytes() end, function() return z.utf8() end,
+            function() return z.number() end, function() return z.integer() end,
+            function() return z.i8() end, function() return z.u8() end,
+            function() return z.boolean() end, function() return z.any() end, function() return z.unknown() end,
+            function() return z.literal("a") end, function() return z.enum({ "a", "ab", 1 }) end,
+            function() return z.union(z.string(), z.number()) end,
+            function() return z.string():optional() end, function() return z.number():nullable(sentinel) end,
+        }
+        for i = 1, #keys do
+            local key = keys[i]
+            sameVerdict(function() return z.record(key(), z.any()) end, mixed)
+            sameVerdict(function() return z.record(key(), z.number()) end, mixed)
+        end
+    end)
 end

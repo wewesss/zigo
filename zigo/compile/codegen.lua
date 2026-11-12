@@ -358,6 +358,13 @@ containers.tuple = function(ctx, d, v, s)
     end
 end
 
+local keyTyped = { string = true, bytes = true, utf8 = true, number = true, integer = true, boolean = true }
+for i = 1, #closures.fixedInts do keyTyped[closures.fixedInts[i][1]] = true end
+
+local function checksKeyType(key)
+    return keyTyped[key.kind] == true and not key.d.optional and not key.d.nullable
+end
+
 containers.record = function(ctx, d, v, s)
     depthGuard(ctx, s)
     add(ctx, "if type(" .. v .. ") ~= \"table\" then return false end")
@@ -365,9 +372,11 @@ containers.record = function(ctx, d, v, s)
     add(ctx, "local " .. c .. " = 0")
     add(ctx, "for " .. k .. ", " .. x .. " in next, " .. v .. " do")
     add(ctx, c .. " = " .. c .. " + 1 if " .. c .. " > " .. limitExpr(ctx, ctx.lim.maxKeys) .. " then return false end")
-    add(ctx, "local " .. t .. " = type(" .. k .. ")")
-    add(ctx, "if " .. t .. " ~= \"string\" and " .. t .. " ~= \"number\" and " .. t
-        .. " ~= \"boolean\" then return false end")
+    if not checksKeyType(d.key) then
+        add(ctx, "local " .. t .. " = type(" .. k .. ")")
+        add(ctx, "if " .. t .. " ~= \"string\" and " .. t .. " ~= \"number\" and " .. t
+            .. " ~= \"boolean\" then return false end")
+    end
     gen(ctx, d.key, k, s + 1)
     gen(ctx, d.value, x, s + 1)
     add(ctx, "end")
