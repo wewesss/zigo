@@ -3,6 +3,8 @@ local context = require("zigo.compile.context")
 local limitsLib = require("zigo.limits")
 local nulls = require("zigo.null")
 
+local acquire, release = context.acquire, context.release
+
 local M = {}
 
 local kinds = {}
@@ -73,10 +75,12 @@ function M.derive(source, changes)
 end
 
 local function impureRun(self, v)
-    local ctx = context.collect({ cap = self._limits.cap }, nil)
+    local ctx = acquire(self._limits.cap)
     local ok, out = self._parse(v, ctx, 0)
+    local issues = ctx.issues
+    release(ctx)
     if ok then return true, out end
-    return false, nil, errors.new(ctx.issues or { { path = {}, code = "custom" } })
+    return false, nil, errors.new(issues or { { path = {}, code = "custom" } })
 end
 
 local function impureSafeParse(self, v)

@@ -659,4 +659,104 @@ return function(env)
         local ok = S:safeParse({ { a = "x", b = 1 }, { a = "y", b = "no" }, { a = "z", b = 3 } })
         assertFalse(ok); assertEq(c.n, 3)
     end)
+
+    test("context reuse: a parse started inside a callback leaves the outer one intact", function()
+        local innerErr
+        local inner = z.object({ n = z.string():transform(upper) })
+        local outer = z.object({
+            a = z.string():transform(function(v)
+                local ok, _, err = inner:safeParse({ n = 5 })
+                assertFalse(ok)
+                innerErr = err
+                return v
+            end),
+            b = z.number(),
+        })
+        local ok, _, err = outer:safeParse({ a = "x", b = "no" })
+        assertFalse(ok)
+        assertEq(err:format(), "b: Expected number, got string")
+        assertEq(innerErr:format(), "n: Expected string, got number")
+        local good, value = outer:safeParse({ a = "x", b = 1 })
+        assertTrue(good); assertEq(value.a, "x")
+    end)
+
+    test("context reuse: an issue recorded before a nested parse survives it", function()
+        local inner = z.object({ n = z.string():transform(upper) })
+        local outer = z.object({
+            a = z.number(),
+            b = z.string():transform(function(v)
+                local ok = inner:safeParse({ n = 5 })
+                assertFalse(ok)
+                return v
+            end),
+            c = z.string():refine(function() return false end, { message = "late" }),
+        })
+        local ok, _, err = outer:safeParse({ a = "no", b = "x", c = "y" })
+        assertFalse(ok)
+        assertEq(err:format(), "a: Expected number, got string\nc: late")
+    end)
+
+    test("context reuse: a callback that raises leaves later parses correct", function()
+        local S = z.object({
+            a = z.string():transform(function(v)
+                if v == "boom" then error("boom", 0) end
+                return v
+            end),
+            b = z.integer(),
+        })
+        local ok, err = pcall(S.safeParse, S, { a = "boom", b = 1 })
+        assertFalse(ok); assertEq(err, "boom")
+        local _, _, bad = S:safeParse({ a = "ok", b = "x" })
+        assertEq(bad:format(), "b: Expected integer, got string")
+        assertTrue((S:safeParse({ a = "ok", b = 1 })))
+        local raised, e = pcall(S.parse, S, { a = "boom", b = 1 })
+        assertFalse(raised); assertEq(e, "boom")
+        assertTrue(pcall(S.parse, S, { a = "ok", b = 1 }))
+    end)
+
+    test("context reuse: a raise inside an abort-early union does not leave collection off", function()
+        local U = z.union(
+            z.string():transform(function(v)
+                if v == "boom" then error("boom", 0) end
+                return v
+            end),
+            z.number()
+        )
+        local S = z.object({ u = U, w = z.string():transform(function(v) return v end) }):limits({ abortEarly = true })
+        local ok, err = pcall(S.safeParse, S, { u = "boom", w = "x" })
+        assertFalse(ok); assertEq(err, "boom")
+        local _, _, e1 = S:safeParse({ u = true, w = "x" })
+        assertEq(e1.issues[1].code, "invalid_union")
+        assertDeepEq(e1.issues[1].path, { "u" })
+        local _, _, e2 = S:safeParse({ u = 1, w = 5 })
+        assertDeepEq(e2.issues[1].path, { "w" })
+    end)
+
+    test("context reuse: the issues of one failure are not touched by the next parse", function()
+        local S = z.object({
+            a = z.string():refine(function() return false end, { message = "first" }),
+            b = z.string():refine(function() return false end, { message = "second" }),
+        })
+        local _, _, e1 = S:safeParse({ a = "x", b = "y" })
+        local before = e1:format()
+        local _, _, e2 = S:safeParse({ a = "x", b = "y" })
+        assertEq(e1:format(), before)
+        assertEq(#e1.issues, 2)
+        assertTrue(e1.issues ~= e2.issues)
+        assertTrue(e1.issues[1].path ~= e2.issues[1].path)
+    end)
+
+    test("context reuse: the issue cap of each schema is honoured when contexts are shared", function()
+        local function two() return z.object({
+            a = z.string():refine(function() return false end),
+            b = z.string():refine(function() return false end),
+        }) end
+        local capped, open = two():limits({ abortEarly = true }), two()
+        for _ = 1, 3 do
+            local _, _, e1 = capped:safeParse({ a = "x", b = "y" })
+            local _, _, e2 = open:safeParse({ a = "x", b = "y" })
+            assertEq(#e1.issues, 1)
+            assertEq(#e2.issues, 2)
+        end
+    end)
 end
