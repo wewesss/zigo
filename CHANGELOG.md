@@ -2,6 +2,15 @@
 
 All notable changes to zigo are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project follows [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Documentation
+
+- README rewritten in English and French: badges (CI, release, LuaRocks, Lua version, runtime dependencies, license), quickstart with a `discriminatedUnion` example, three install paths (LuaRocks, release archive with LuaLS setup, sources), features, documentation links.
+- `.github/release-readme.md` (the README shipped in the release archive) now holds a usage example, the LuaLS `Lua.workspace.library` note and full GitHub links.
+- Added `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1) and `SECURITY.md`.
+- Added the pull request template and the issue templates (bug report, feature request) under `.github/`.
+
 ## [1.0.0] - 2026-11-09
 
 First stable release. Lua 5.1, 5.2, 5.3, 5.4 and LuaJIT 2.1, zero dependency.

@@ -1,0 +1,42 @@
+name: Feature request
+description: Propose a new schema type, modifier, option or API for zigo.
+title: "[feature] "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you unable to do today? Describe the situation, not the solution.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed-api
+    attributes:
+      label: Proposed API
+      description: >
+        What the call should look like and what it should return. A short Lua snippet is the best form.
+      render: lua
+    validations:
+      required: true
+
+  - type: textarea
+    id: zod-equivalent
+    attributes:
+      label: Zod equivalent
+      description: If Zod has an equivalent, which one (a link or the call). If not, say so.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: contribute
+    attributes:
+      label: Willingness to contribute
+      options:
+        - I can open a pull request for this
+        - I can help test a pull request
+        - I am reporting the idea only
+    validations:
+      required: true
