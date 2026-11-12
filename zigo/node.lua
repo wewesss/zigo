@@ -10,6 +10,7 @@ local compilers = {}
 local metatables = {}
 local fields = setmetatable({}, { __mode = "k" })
 local base = {}
+local hot = { safeParse = true, parse = true, is = true }
 
 local function frozen()
     error("zigo: schema nodes are immutable", 2)
@@ -94,7 +95,10 @@ local function makeMeta(kind, methods)
         local own = fields[self][key]
         if own ~= nil then return own end
         local m = methods[key]
-        if m ~= nil then return m end
+        if m ~= nil then
+            if hot[key] then rawset(self, key, m) end
+            return m
+        end
         local compile = compilers[key]
         if compile then
             local fn = compile(self)
