@@ -549,7 +549,7 @@ local _, _, bad = Port:safeParse("x")
 print(bad:format()) --> <root>: not a number
 ```
 
-Deux pièges. `fn` est appelée comme `fn(value, ctx)` : une fonction qui lit un second argument, comme `tonumber`, doit être enveloppée. Et un `transform` doit être sans effet de bord, car après un échec la passe de diagnostic peut le rappeler.
+Deux points. `fn` est appelée comme `fn(value, ctx)` : une fonction qui lit un second argument, comme `tonumber`, doit être enveloppée. Et chaque callback (`transform`, `refine`, une fonction `default`) s'exécute au plus une fois par appel à `parse` ou `safeParse`, entrée valide ou non ; le `ctx` reçu n'est valable que pendant cet appel, il ne faut pas le conserver.
 
 ### pipe
 

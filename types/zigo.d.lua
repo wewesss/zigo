@@ -81,7 +81,7 @@ function Node:nullable(sentinel) end
 ---@return zigo.Node
 function Node:default(x) end
 
----@param fn fun(v: any, ctx: zigo.Context): any must be free of side effects
+---@param fn fun(v: any, ctx: zigo.Context): any
 ---@return zigo.Node
 function Node:transform(fn) end
 
