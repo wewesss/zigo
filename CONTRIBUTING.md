@@ -51,6 +51,16 @@ Never add an AI co-author trailer to a commit message, under any name. Authorshi
 - **CHANGELOG.** Add an entry under `## [Unreleased]` in `CHANGELOG.md`.
 - **No documentation claim without its proof**: a test, a measurement with its command, or a source URL.
 
+## Releasing
+
+1. Bump the version in a new rockspec (`zigo-X.Y.Z-1.rockspec`, with its `tag`), in `_VERSION` of `zigo/init.lua` and in `CHANGELOG.md` (move `[Unreleased]` under the new version and date).
+2. Merge to `main` once CI is green.
+3. Tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z`.
+4. The `Release` workflow builds the bundle, runs the tests against it and creates a draft release with `zigo-vX.Y.Z.zip` (readable and minified bundles, LuaLS types, LICENSE, README). Review the generated notes and publish the draft.
+5. Publishing the release starts the `Publish to LuaRocks` workflow, which uploads `zigo-X.Y.Z-1.rockspec` when the `LUAROCKS_API_KEY` secret is set. It skips the upload when that version is already on LuaRocks.
+
+Both workflows can also be started by hand (Actions, Run workflow) with the name of an existing tag.
+
 ## Licensing of contributions
 
 zigo is MIT licensed. By submitting a contribution you agree it is licensed to the project under the same MIT license.
