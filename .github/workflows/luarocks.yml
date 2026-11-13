@@ -1,0 +1,70 @@
+name: Publish to LuaRocks
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to publish (for example v1.0.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  luarocks:
+    name: Upload the rockspec
+    runs-on: ubuntu-latest
+    env:
+      REF_NAME: ${{ github.event.inputs.tag || github.event.release.tag_name }}
+      LUAROCKS_API_KEY: ${{ secrets.LUAROCKS_API_KEY }}
+    steps:
+      - name: Checkout the tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REF_NAME }}
+
+      - name: Check the rockspec and the published version
+        id: check
+        run: |
+          set -euo pipefail
+          if [ -z "${LUAROCKS_API_KEY}" ]; then
+            echo "LUAROCKS_API_KEY is not set, nothing to publish."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          version="${REF_NAME#v}"
+          rockspec="zigo-${version}-1.rockspec"
+          if [ ! -f "${rockspec}" ]; then
+            echo "Missing ${rockspec}" >&2
+            exit 1
+          fi
+          status="$(curl -s -o /dev/null -w '%{http_code}' "https://luarocks.org/manifests/sup2ak/${rockspec}")"
+          if [ "${status}" = "200" ]; then
+            echo "${rockspec} is already on LuaRocks, nothing to publish."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "rockspec=${rockspec}" >> "$GITHUB_OUTPUT"
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Lua 5.4
+        if: steps.check.outputs.skip == 'false'
+        uses: leafo/gh-actions-lua@v10
+        with:
+          luaVersion: "5.4"
+
+      - name: Set up LuaRocks
+        if: steps.check.outputs.skip == 'false'
+        uses: leafo/gh-actions-luarocks@v4
+
+      - name: Upload to LuaRocks
+        if: steps.check.outputs.skip == 'false'
+        env:
+          ROCKSPEC: ${{ steps.check.outputs.rockspec }}
+        run: |
+          set -euo pipefail
+          luarocks install dkjson
+          luarocks upload "${ROCKSPEC}" --api-key="${LUAROCKS_API_KEY}"
