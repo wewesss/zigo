@@ -204,7 +204,7 @@ local function render()
     end
     emit()
     emit("> [!IMPORTANT]")
-    emit("> Generated file, not committed. Read `COMPARE.md` for the method and the guarantees caveats before quoting a number.")
+    emit("> Generated file. Read `COMPARE.md` for the method and the guarantees caveats before quoting a number.")
     emit()
     emit("The `agrees with baseline` column counts how many fixture inputs each row classified as the hand-written baseline does. A row marked MISMATCH does not enforce every guarantee of the fixture, so its timing is not a like-for-like comparison.")
     emit()

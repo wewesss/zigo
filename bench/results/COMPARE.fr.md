@@ -2,7 +2,7 @@
 
 [English](./COMPARE.md) · Français
 
-`bench/compare.lua` mesure zigo à côté de trois bibliothèques de validation Lua tierces, sur les mêmes jeux de données. Cette page décrit la méthode, les versions épinglées, l'installation des bibliothèques et ce que chacune peut ou ne peut pas exprimer. **Aucun chiffre mesuré n'est commité pour l'instant** : ils seront publiés après l'optimisation du cœur, à partir d'un run complet. Un run écrit localement `bench/results/compare-<runtime>.md`, fichier ignoré par git.
+`bench/compare.lua` mesure zigo à côté de trois bibliothèques de validation Lua tierces, sur les mêmes jeux de données. Cette page décrit la méthode, les versions épinglées, l'installation des bibliothèques et ce que chacune peut ou ne peut pas exprimer. Un run écrit `bench/results/compare-<runtime>.md` ; ceux du dépôt viennent du run complet résumé ci-dessous.
 
 ## Ce qui est comparé
 
@@ -29,6 +29,28 @@ Lignes, dans cet ordre :
 4. l'appel de vérification public de chaque bibliothèque. tableshape a deux lignes : interprété (`check_value` sur le type) et compilé (`tableshape.codegen`, puis `check_value`).
 
 Le chronométrage, la gestion du GC et le suivi des allocations sont ceux de `bench/framework.lua` (lots calibrés, P50 et P99 sur les échantillons, octets alloués par appel).
+
+## Résultats
+
+Run complet du 2026-11-13 (`lua bench/compare.lua` et `luajit bench/compare.lua`, Windows 11, Lua 5.4.7 et LuaJIT 2.1.1727870382 de MSYS2, même machine). P50 par appel, entrées valides / entrées invalides. Tableaux complets, avec P99, allocations et colonne d'acceptation : [compare-5.4.md](./compare-5.4.md), [compare-luajit-2.1.md](./compare-luajit-2.1.md).
+
+| ligne | S2 en 5.4 | S4 en 5.4 | S5 en 5.4 | S2 en LuaJIT | S4 en LuaJIT | S5 en LuaJIT |
+|---|---:|---:|---:|---:|---:|---:|
+| écrit à la main | 500 ns / 75 ns | 107 µs / 13,9 µs | 126 ns / 81 ns | 62 ns / 10 ns | 6,3 µs / 1,14 µs | 48 ns / 23 ns |
+| zigo `:is` | 595 ns / 255 ns | 110 µs / 14,2 µs | 181 ns / 124 ns | 72 ns / 27 ns | 8,0 µs / 1,15 µs | 48 ns / 54 ns |
+| zigo `:safeParse` | 605 ns / 2,09 µs | 113 µs / 210 µs | 164 ns / 1,27 µs | 88 ns / 400 ns | 4,7 µs / 8,1 µs | 60 ns / 600 ns |
+| tableshape (codegen) ¹ | 730 ns / 348 ns | 170 µs / 235 ns | 392 ns / 467 ns | 74 ns / 134 ns | 6,5 µs / 110 ns | 105 ns / 104 ns |
+| lua-resty-ljsonschema | 1,50 µs / 1,81 µs | 362 µs / 14,1 µs | 1,52 µs / 7,00 µs | 340 ns / 485 ns | 189 µs / 3,51 µs | 1,13 µs / 5,10 µs |
+| lshape ¹ | 6,10 µs / 3,80 µs | 1,68 ms / 1,98 µs | 1,68 µs / 3,74 µs | 1,51 µs / 1,03 µs | 423 µs / 670 ns | 575 ns / 1,48 µs |
+
+¹ `MISMATCH` sur S2 et S4 : accepte des tableaux à trous ou à clés parasites que la fixture refuse (voir les réserves ci-dessous). tableshape interprété est 10 à 20× plus lent que son codegen et n'est pas repris ici.
+
+Lecture :
+
+- **Entrées valides** : zigo est la bibliothèque la plus rapide sur chaque scénario, à 1,0-1,3× du contrôle écrit à la main en 5.4 et à égalité en LuaJIT.
+- **Entrées invalides, `:is`** : aussi rapide que le contrôle écrit à la main sur S4, à 1,5-3,3× ailleurs.
+- **Entrées invalides, `:safeParse`** : plus lent que `:is` parce qu'il collecte toutes les erreurs avec leur chemin (jusqu'à `maxErrors`, 100 par défaut), alors que tableshape et lshape s'arrêtent au premier échec et renvoient une chaîne. Sur S4 (première ligne sur 1000 invalide), zigo visite encore les 999 lignes valides ; `abortEarly` arrête à la première erreur, ou appeler `:is` d'abord quand seul le verdict compte.
+- En LuaJIT, les temps sous 5 ns environ (S1 dans les tableaux complets) sont à la résolution du timer et ne veulent rien dire.
 
 ## Contrôle d'acceptation
 

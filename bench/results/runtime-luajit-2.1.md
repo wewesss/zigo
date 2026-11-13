@@ -1,7 +1,7 @@
 # zigo bench — `luajit-2.1`
 
 **Runtime** : Lua 5.1 / LuaJIT 2.1.1727870382
-**Generated** : 2026-11-08 23:04
+**Generated** : 2026-11-13 01:58
 **Config** : 30 samples, 200 warmup, 50ms calibration target
 
 > [!IMPORTANT]
@@ -36,125 +36,145 @@ scenario, so ratios stay accurate even on LuaJIT.
 
 | benchmark | mean | alloc | gc | rate | min..max | p50/p99 | vs base |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| `hand-written if-chain` | 1 ns | 0 B | 0/30 | 762.20 M/s | 1 ns..1 ns | 1 ns/1 ns | _(base)_ |
-| `zigo codegen` | 1 ns | 0 B | 0/30 | 787.19 M/s | 1 ns..1 ns | 1 ns/1 ns | tie |
-| `zigo closures` | 2 ns | 0 B | 0/30 | 660.36 M/s | 1 ns..2 ns | 2 ns/2 ns | 1.15× slower |
+| `hand-written if-chain` | 1 ns | 0 B | 0/30 | 767.66 M/s | 1 ns..1 ns | 1 ns/1 ns | _(base)_ |
+| `zigo codegen` | 1 ns | 0 B | 0/30 | 769.03 M/s | 1 ns..1 ns | 1 ns/1 ns | tie |
+| `zigo closures` | 2 ns | 0 B | 0/30 | 642.40 M/s | 1 ns..2 ns | 2 ns/2 ns | 1.19× slower |
+| `zigo :is (public)` | 11 ns | 0 B | 0/30 | 87.72 M/s | 11 ns..13 ns | 11 ns/13 ns | 8.75× slower |
+| `zigo :safeParse (public)` | 17 ns | 0 B | 0/30 | 59.34 M/s | 14 ns..20 ns | 17 ns/20 ns | 12.94× slower |
 
 ## S2 reference schema (7 fields, nested object, array, enum, optional) - valid inputs
 
 | benchmark | mean | alloc | gc | rate | min..max | p50/p99 | vs base |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| `hand-written if-chain` | 42 ns | 0 B | 0/30 | 23.89 M/s | 40 ns..55 ns | 41 ns/45 ns | _(base)_ |
-| `zigo codegen` | 47 ns | 0 B | 0/30 | 21.45 M/s | 44 ns..52 ns | 46 ns/50 ns | 1.11× slower |
-| `zigo closures` | 227 ns | 0 B | 0/30 | 4.41 M/s | 211 ns..251 ns | 224 ns/249 ns | 5.42× slower |
+| `hand-written if-chain` | 83 ns | 2 B | 0/30 | 12.05 M/s | 49 ns..136 ns | 83 ns/103 ns | _(base)_ |
+| `zigo codegen` | 55 ns | 1 B | 0/30 | 18.09 M/s | 48 ns..67 ns | 54 ns/66 ns | 1.50× faster |
+| `zigo closures` | 262 ns | 0 B | 0/30 | 3.81 M/s | 232 ns..317 ns | 260 ns/301 ns | 3.16× slower |
+| `zigo :is (public)` | 75 ns | 1 B | 0/30 | 13.29 M/s | 61 ns..98 ns | 74 ns/91 ns | 1.10× faster |
+| `zigo :safeParse (public)` | 68 ns | 2 B | 0/30 | 14.61 M/s | 60 ns..92 ns | 63 ns/85 ns | 1.21× faster |
 
 ## S3 nesting depth 8 - valid inputs
 
 | benchmark | mean | alloc | gc | rate | min..max | p50/p99 | vs base |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| `hand-written if-chain` | 53 ns | 0 B | 0/30 | 18.74 M/s | 50 ns..57 ns | 53 ns/56 ns | _(base)_ |
-| `zigo codegen` | 51 ns | 1 B | 0/30 | 19.58 M/s | 49 ns..54 ns | 51 ns/53 ns | tie |
-| `zigo closures` | 567 ns | 0 B | 0/30 | 1.76 M/s | 540 ns..610 ns | 570 ns/590 ns | 10.62× slower |
+| `hand-written if-chain` | 68 ns | 0 B | 0/30 | 14.75 M/s | 65 ns..74 ns | 67 ns/71 ns | _(base)_ |
+| `zigo codegen` | 65 ns | 1 B | 0/30 | 15.29 M/s | 63 ns..78 ns | 65 ns/69 ns | tie |
+| `zigo closures` | 533 ns | 0 B | 0/30 | 1.87 M/s | 500 ns..590 ns | 530 ns/580 ns | 7.87× slower |
+| `zigo :is (public)` | 73 ns | 1 B | 0/30 | 13.64 M/s | 68 ns..84 ns | 72 ns/83 ns | 1.08× slower |
+| `zigo :safeParse (public)` | 83 ns | 1 B | 0/30 | 12.00 M/s | 73 ns..99 ns | 85 ns/94 ns | 1.23× slower |
 
 ## S4 array of 1000 objects - valid inputs
 
 | benchmark | mean | alloc | gc | rate | min..max | p50/p99 | vs base |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| `hand-written if-chain` | 5.09 µs | 2 B | 0/30 | 196.46 K/s | 4.50 µs..6.40 µs | 5.00 µs/5.70 µs | _(base)_ |
-| `zigo codegen` | 8.35 µs | 2 B | 0/30 | 119.81 K/s | 4.80 µs..11.50 µs | 8.55 µs/11.00 µs | 1.64× slower |
-| `zigo closures` | 111.83 µs | 2 B | 0/30 | 8.94 K/s | 100.00 µs..143.00 µs | 110.50 µs/135.00 µs | 21.97× slower |
+| `hand-written if-chain` | 6.44 µs | 2 B | 0/30 | 155.36 K/s | 4.80 µs..7.50 µs | 6.40 µs/7.40 µs | _(base)_ |
+| `zigo codegen` | 6.34 µs | 2 B | 0/30 | 157.81 K/s | 4.90 µs..7.70 µs | 6.40 µs/7.30 µs | tie |
+| `zigo closures` | 92.23 µs | 2 B | 0/30 | 10.84 K/s | 88.00 µs..108.00 µs | 90.00 µs/102.00 µs | 14.33× slower |
+| `zigo :is (public)` | 5.11 µs | 2 B | 0/30 | 195.55 K/s | 4.58 µs..7.27 µs | 4.90 µs/6.22 µs | 1.26× faster |
+| `zigo :safeParse (public)` | 6.09 µs | 3 B | 0/30 | 164.29 K/s | 4.50 µs..7.50 µs | 6.15 µs/7.40 µs | 1.06× faster |
 
 ## S5 discriminatedUnion, 10 variants - valid inputs
 
 | benchmark | mean | alloc | gc | rate | min..max | p50/p99 | vs base |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| `hand-written if-chain` | 40 ns | 0 B | 0/30 | 25.21 M/s | 33 ns..55 ns | 37 ns/54 ns | _(base)_ |
-| `zigo codegen` | 40 ns | 0 B | 0/30 | 24.87 M/s | 38 ns..43 ns | 40 ns/43 ns | tie |
-| `zigo closures` | 160 ns | 0 B | 0/30 | 6.27 M/s | 145 ns..179 ns | 160 ns/173 ns | 4.02× slower |
+| `hand-written if-chain` | 67 ns | 3 B | 0/30 | 14.99 M/s | 54 ns..84 ns | 65 ns/79 ns | _(base)_ |
+| `zigo codegen` | 9 ns | 0 B | 0/30 | 108.54 M/s | 8 ns..11 ns | 9 ns/10 ns | 7.24× faster |
+| `zigo closures` | 64 ns | 0 B | 0/30 | 15.73 M/s | 59 ns..74 ns | 63 ns/69 ns | tie |
+| `zigo :is (public)` | 17 ns | 0 B | 0/30 | 59.89 M/s | 15 ns..21 ns | 16 ns/19 ns | 3.99× faster |
+| `zigo :safeParse (public)` | 19 ns | 0 B | 0/30 | 52.67 M/s | 17 ns..23 ns | 19 ns/22 ns | 3.51× faster |
 
 ## S6 invalid early or late (12 fields) - valid inputs
 
 | benchmark | mean | alloc | gc | rate | min..max | p50/p99 | vs base |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| `hand-written if-chain` | 51 ns | 2 B | 0/30 | 19.46 M/s | 48 ns..55 ns | 51 ns/55 ns | _(base)_ |
-| `zigo codegen` | 17 ns | 0 B | 0/30 | 60.23 M/s | 16 ns..18 ns | 17 ns/18 ns | 3.10× faster |
-| `zigo closures` | 198 ns | 0 B | 0/30 | 5.04 M/s | 179 ns..239 ns | 192 ns/238 ns | 3.86× slower |
-| `zigo safeParse` | 33 ns | 0 B | 0/30 | 30.23 M/s | 30 ns..36 ns | 33 ns/35 ns | 1.55× faster |
-| `zigo safeParse, abortEarly` | 34 ns | 0 B | 0/30 | 29.76 M/s | 28 ns..40 ns | 34 ns/39 ns | 1.53× faster |
+| `hand-written if-chain` | 31 ns | 0 B | 0/30 | 32.50 M/s | 27 ns..41 ns | 31 ns/35 ns | _(base)_ |
+| `zigo codegen` | 46 ns | 0 B | 0/30 | 21.64 M/s | 31 ns..69 ns | 46 ns/68 ns | 1.50× slower |
+| `zigo closures` | 232 ns | 0 B | 0/30 | 4.30 M/s | 217 ns..274 ns | 227 ns/264 ns | 7.56× slower |
+| `zigo :is (public)` | 41 ns | 0 B | 0/30 | 24.48 M/s | 38 ns..47 ns | 41 ns/44 ns | 1.33× slower |
+| `zigo :safeParse (public)` | 48 ns | 0 B | 0/30 | 20.92 M/s | 42 ns..52 ns | 48 ns/52 ns | 1.55× slower |
+| `zigo safeParse` | 42 ns | 0 B | 0/30 | 23.90 M/s | 40 ns..47 ns | 41 ns/46 ns | 1.36× slower |
+| `zigo safeParse, abortEarly` | 66 ns | 0 B | 0/30 | 15.24 M/s | 45 ns..104 ns | 58 ns/100 ns | 2.13× slower |
 
 ## S6 invalid early or late (12 fields) - invalid at the first field
 
 | benchmark | mean | alloc | gc | rate | min..max | p50/p99 | vs base |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| `hand-written if-chain` | 16 ns | 0 B | 0/30 | 64.39 M/s | 14 ns..19 ns | 15 ns/18 ns | _(base)_ |
-| `zigo codegen` | 14 ns | 0 B | 0/30 | 73.55 M/s | 12 ns..16 ns | 13 ns/16 ns | 1.14× faster |
-| `zigo closures` | 48 ns | 0 B | 0/30 | 20.78 M/s | 43 ns..59 ns | 47 ns/55 ns | 3.10× slower |
-| `zigo safeParse` | 658 ns | 551 B | 0/30 | 1.52 M/s | 490 ns..880 ns | 645 ns/860 ns | 42.37× slower |
-| `zigo safeParse, abortEarly` | 378 ns | 545 B | 0/30 | 2.65 M/s | 265 ns..522 ns | 368 ns/493 ns | 24.33× slower |
+| `hand-written if-chain` | 27 ns | 0 B | 0/30 | 36.88 M/s | 24 ns..32 ns | 27 ns/32 ns | _(base)_ |
+| `zigo codegen` | 28 ns | 0 B | 0/30 | 35.48 M/s | 26 ns..34 ns | 28 ns/32 ns | tie |
+| `zigo closures` | 60 ns | 0 B | 0/30 | 16.62 M/s | 54 ns..91 ns | 59 ns/71 ns | 2.22× slower |
+| `zigo :is (public)` | 36 ns | 0 B | 0/30 | 28.13 M/s | 33 ns..45 ns | 34 ns/44 ns | 1.31× slower |
+| `zigo :safeParse (public)` | 658 ns | 550 B | 0/30 | 1.52 M/s | 500 ns..890 ns | 620 ns/880 ns | 24.26× slower |
+| `zigo safeParse` | 1.08 µs | 549 B | 0/30 | 929.37 K/s | 830 ns..1.41 µs | 1.03 µs/1.41 µs | 39.69× slower |
+| `zigo safeParse, abortEarly` | 372 ns | 545 B | 0/30 | 2.69 M/s | 320 ns..525 ns | 342 ns/518 ns | 13.72× slower |
 
 ## S6 invalid early or late (12 fields) - invalid at the last field
 
 | benchmark | mean | alloc | gc | rate | min..max | p50/p99 | vs base |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| `hand-written if-chain` | 29 ns | 0 B | 0/30 | 34.35 M/s | 26 ns..32 ns | 29 ns/31 ns | _(base)_ |
-| `zigo codegen` | 21 ns | 0 B | 0/30 | 47.89 M/s | 18 ns..23 ns | 21 ns/22 ns | 1.39× faster |
-| `zigo closures` | 240 ns | 0 B | 0/30 | 4.17 M/s | 214 ns..277 ns | 239 ns/275 ns | 8.23× slower |
-| `zigo safeParse` | 819 ns | 559 B | 0/30 | 1.22 M/s | 610 ns..940 ns | 835 ns/930 ns | 28.14× slower |
-| `zigo safeParse, abortEarly` | 808 ns | 559 B | 0/30 | 1.24 M/s | 610 ns..1.01 µs | 785 ns/1.01 µs | 27.77× slower |
+| `hand-written if-chain` | 41 ns | 0 B | 0/30 | 24.44 M/s | 34 ns..55 ns | 39 ns/52 ns | _(base)_ |
+| `zigo codegen` | 60 ns | 0 B | 0/30 | 16.70 M/s | 39 ns..101 ns | 54 ns/96 ns | 1.46× slower |
+| `zigo closures` | 246 ns | 0 B | 0/30 | 4.07 M/s | 219 ns..290 ns | 242 ns/290 ns | 6.01× slower |
+| `zigo :is (public)` | 88 ns | 0 B | 0/30 | 11.34 M/s | 82 ns..108 ns | 85 ns/105 ns | 2.15× slower |
+| `zigo :safeParse (public)` | 806 ns | 546 B | 0/30 | 1.24 M/s | 660 ns..1.21 µs | 700 ns/1.15 µs | 19.71× slower |
+| `zigo safeParse` | 1.16 µs | 545 B | 0/30 | 861.33 K/s | 860 ns..1.64 µs | 1.14 µs/1.55 µs | 28.37× slower |
+| `zigo safeParse, abortEarly` | 1.18 µs | 545 B | 0/30 | 848.90 K/s | 830 ns..1.50 µs | 1.18 µs/1.48 µs | 28.79× slower |
 
 ## S7 adversarial payload (10 000 potential errors) - invalid inputs
 
 | benchmark | mean | alloc | gc | rate | min..max | p50/p99 | vs base |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| `hand-written if-chain` | 19.03 µs | 2 B | 0/30 | 52.55 K/s | 12.30 µs..26.20 µs | 18.75 µs/25.00 µs | _(base)_ |
-| `zigo codegen` | 16.41 µs | 2 B | 0/30 | 60.94 K/s | 11.80 µs..23.90 µs | 15.15 µs/22.10 µs | 1.16× faster |
-| `zigo closures` | 26.91 µs | 3 B | 0/30 | 37.16 K/s | 19.10 µs..34.20 µs | 27.25 µs/32.30 µs | 1.41× slower |
-| `zigo safeParse, maxErrors = inf (10 000 issues)` | 4.23 ms | 3.41 MB | 0/30 | 237 /s | 3.19 ms..5.79 ms | 4.14 ms/5.75 ms | 222.18× slower |
-| `zigo safeParse, default maxErrors (100)` | 84.83 µs | 34.82 KB | 0/30 | 11.79 K/s | 53.00 µs..115.00 µs | 83.00 µs/110.00 µs | 4.46× slower |
-| `zigo safeParse, abortEarly` | 33.42 µs | 570 B | 0/30 | 29.93 K/s | 29.40 µs..46.60 µs | 32.45 µs/37.80 µs | 1.76× slower |
+| `hand-written if-chain` | 15.96 µs | 1 B | 0/30 | 62.67 K/s | 11.60 µs..21.50 µs | 15.20 µs/21.40 µs | _(base)_ |
+| `zigo codegen` | 13.81 µs | 1 B | 0/30 | 72.43 K/s | 11.40 µs..19.40 µs | 13.40 µs/17.00 µs | 1.16× faster |
+| `zigo closures` | 24.64 µs | 1 B | 0/30 | 40.58 K/s | 18.50 µs..35.20 µs | 24.25 µs/29.50 µs | 1.54× slower |
+| `zigo :is (public)` | 16.45 µs | 0 B | 0/30 | 60.80 K/s | 11.70 µs..24.50 µs | 14.30 µs/23.10 µs | tie |
+| `zigo :safeParse (public)` | 78.33 µs | 34.82 KB | 0/30 | 12.77 K/s | 54.00 µs..130.00 µs | 78.00 µs/105.00 µs | 4.91× slower |
+| `zigo safeParse, maxErrors = inf (10 000 issues)` | 4.08 ms | 3.41 MB | 0/30 | 245 /s | 3.37 ms..5.43 ms | 3.95 ms/4.73 ms | 255.92× slower |
+| `zigo safeParse, default maxErrors (100)` | 73.77 µs | 34.82 KB | 0/30 | 13.56 K/s | 54.00 µs..104.00 µs | 71.50 µs/103.00 µs | 4.62× slower |
+| `zigo safeParse, abortEarly` | 36.68 µs | 569 B | 0/30 | 27.26 K/s | 30.20 µs..49.60 µs | 36.40 µs/45.30 µs | 2.30× slower |
 
 ## S9 200 schemas defined, 10 used - cold start
 
 | benchmark | mean | alloc | gc | rate | min..max | p50/p99 | vs base |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| `define 200 (no compilation)` | 1.84 ms | 1.94 MB | 0/30 | 545 /s | 1.29 ms..2.68 ms | 1.79 ms/2.67 ms | _(base)_ |
-| `define 200, validate with 10 (compiled on first use)` | 2.58 ms | 1.94 MB | 0/30 | 387 /s | 2.13 ms..3.11 ms | 2.55 ms/3.06 ms | 1.41× slower |
-| `define 200, compile all 200, validate with 10` | 8.58 ms | 3.37 MB | 0/30 | 117 /s | 7.21 ms..9.81 ms | 8.56 ms/9.46 ms | 4.67× slower |
-| `define 200, validate with 10 (closures)` | 2.77 ms | 1.92 MB | 0/30 | 361 /s | 2.03 ms..3.43 ms | 2.71 ms/3.37 ms | 1.51× slower |
+| `define 200 (no compilation)` | 2.71 ms | 1.94 MB | 0/30 | 370 /s | 2.03 ms..3.85 ms | 2.58 ms/3.55 ms | _(base)_ |
+| `define 200, validate with 10 (compiled on first use)` | 2.61 ms | 1.94 MB | 0/30 | 383 /s | 1.93 ms..3.89 ms | 2.41 ms/3.74 ms | tie |
+| `define 200, compile all 200, validate with 10` | 9.77 ms | 3.40 MB | 0/30 | 102 /s | 7.99 ms..11.60 ms | 9.73 ms/10.97 ms | 3.61× slower |
+| `define 200, validate with 10 (closures)` | 2.82 ms | 1.92 MB | 0/30 | 355 /s | 1.72 ms..3.64 ms | 2.88 ms/3.53 ms | tie |
 
 ## S10 boundary object (u8, i32, int64, utf8) - valid inputs
 
 | benchmark | mean | alloc | gc | rate | min..max | p50/p99 | vs base |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| `hand-written if-chain` | 88 ns | 0 B | 0/30 | 11.32 M/s | 78 ns..98 ns | 88 ns/96 ns | _(base)_ |
-| `zigo codegen` | 87 ns | 1 B | 0/30 | 11.47 M/s | 72 ns..101 ns | 89 ns/99 ns | tie |
-| `zigo closures` | 221 ns | 0 B | 0/30 | 4.52 M/s | 193 ns..263 ns | 216 ns/252 ns | 2.50× slower |
+| `hand-written if-chain` | 76 ns | 0 B | 0/30 | 13.18 M/s | 66 ns..98 ns | 74 ns/90 ns | _(base)_ |
+| `zigo codegen` | 89 ns | 1 B | 0/30 | 11.28 M/s | 69 ns..103 ns | 91 ns/99 ns | 1.17× slower |
+| `zigo closures` | 169 ns | 0 B | 0/30 | 5.92 M/s | 137 ns..193 ns | 173 ns/186 ns | 2.23× slower |
+| `zigo :is (public)` | 79 ns | 1 B | 0/30 | 12.72 M/s | 66 ns..109 ns | 74 ns/108 ns | tie |
+| `zigo :safeParse (public)` | 84 ns | 1 B | 0/30 | 11.97 M/s | 65 ns..109 ns | 79 ns/105 ns | 1.10× slower |
 
 ## Union of 10 variants - valid inputs
 
 | benchmark | mean | alloc | gc | rate | min..max | p50/p99 | vs base |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| `U0 hand-written if/elseif` | 11 ns | 0 B | 0/30 | 90.55 M/s | 10 ns..13 ns | 11 ns/12 ns | _(base)_ |
-| `U1 closures, sequential` | 36 ns | 0 B | 0/30 | 27.88 M/s | 32 ns..38 ns | 36 ns/38 ns | 3.25× slower |
-| `U2 codegen + hash on kind` | 19 ns | 0 B | 0/30 | 52.16 M/s | 15 ns..22 ns | 19 ns/21 ns | 1.74× slower |
-| `U3 matchigo compile (shapes)` | 123 ns | 0 B | 0/30 | 8.12 M/s | 113 ns..130 ns | 123 ns/129 ns | 11.16× slower |
-| `U4 matchigo fast-path + codegen` | 36 ns | 0 B | 0/30 | 28.06 M/s | 34 ns..40 ns | 35 ns/39 ns | 3.23× slower |
+| `U0 hand-written if/elseif` | 10 ns | 0 B | 0/30 | 100.91 M/s | 9 ns..11 ns | 10 ns/11 ns | _(base)_ |
+| `U1 closures, sequential` | 34 ns | 0 B | 0/30 | 29.39 M/s | 31 ns..38 ns | 34 ns/38 ns | 3.43× slower |
+| `U2 codegen + hash on kind` | 17 ns | 0 B | 0/30 | 57.77 M/s | 15 ns..23 ns | 17 ns/22 ns | 1.75× slower |
+| `U3 matchigo compile (shapes)` | 309 ns | 0 B | 0/30 | 3.24 M/s | 269 ns..355 ns | 305 ns/353 ns | 31.14× slower |
+| `U4 matchigo fast-path + codegen` | 31 ns | 0 B | 0/30 | 31.78 M/s | 25 ns..35 ns | 32 ns/35 ns | 3.18× slower |
 
 ## Union of 10 variants - mixed inputs
 
 | benchmark | mean | alloc | gc | rate | min..max | p50/p99 | vs base |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| `U0 hand-written if/elseif` | 12 ns | 0 B | 0/30 | 85.11 M/s | 11 ns..13 ns | 12 ns/13 ns | _(base)_ |
-| `U1 closures, sequential` | 42 ns | 0 B | 0/30 | 23.83 M/s | 37 ns..45 ns | 42 ns/44 ns | 3.57× slower |
-| `U2 codegen + hash on kind` | 21 ns | 0 B | 0/30 | 46.67 M/s | 18 ns..23 ns | 22 ns/23 ns | 1.82× slower |
-| `U3 matchigo compile (shapes)` | 125 ns | 0 B | 0/30 | 7.97 M/s | 115 ns..131 ns | 126 ns/129 ns | 10.68× slower |
-| `U4 matchigo fast-path + codegen` | 32 ns | 0 B | 0/30 | 31.24 M/s | 28 ns..35 ns | 32 ns/35 ns | 2.72× slower |
+| `U0 hand-written if/elseif` | 11 ns | 0 B | 0/30 | 92.76 M/s | 9 ns..12 ns | 11 ns/12 ns | _(base)_ |
+| `U1 closures, sequential` | 37 ns | 0 B | 0/30 | 27.01 M/s | 33 ns..42 ns | 36 ns/41 ns | 3.43× slower |
+| `U2 codegen + hash on kind` | 19 ns | 0 B | 0/30 | 53.37 M/s | 15 ns..23 ns | 19 ns/22 ns | 1.74× slower |
+| `U3 matchigo compile (shapes)` | 356 ns | 0 B | 0/30 | 2.81 M/s | 305 ns..579 ns | 353 ns/424 ns | 32.99× slower |
+| `U4 matchigo fast-path + codegen` | 29 ns | 0 B | 0/30 | 34.68 M/s | 24 ns..57 ns | 27 ns/42 ns | 2.68× slower |
 
 ## S8 impure schema (default, transform, strip) - valid inputs
 
 | benchmark | mean | alloc | gc | rate | min..max | p50/p99 | vs base |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| `hand-written copy` | 221 ns | 351 B | 0/30 | 4.52 M/s | 168 ns..379 ns | 205 ns/331 ns | _(base)_ |
-| `zigo safeParse (_parse)` | 531 ns | 447 B | 0/30 | 1.88 M/s | 374 ns..708 ns | 548 ns/672 ns | 2.40× slower |
-| `zigo is (_parse, no result kept)` | 561 ns | 445 B | 0/30 | 1.78 M/s | 377 ns..727 ns | 568 ns/677 ns | 2.54× slower |
+| `hand-written copy` | 202 ns | 349 B | 0/30 | 4.94 M/s | 176 ns..264 ns | 190 ns/261 ns | _(base)_ |
+| `zigo safeParse (_parse)` | 337 ns | 272 B | 0/30 | 2.96 M/s | 280 ns..470 ns | 320 ns/460 ns | 1.67× slower |
+| `zigo is (_parse, no result kept)` | 383 ns | 432 B | 0/30 | 2.61 M/s | 200 ns..600 ns | 400 ns/600 ns | 1.90× slower |
 

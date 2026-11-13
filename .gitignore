@@ -3,4 +3,3 @@
 .lua/
 bench/results/.stats
 *.rock
-bench/results/compare-*.md
