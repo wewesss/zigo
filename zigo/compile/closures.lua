@@ -228,6 +228,62 @@ local function resolveTarget(d)
     return target
 end
 
+local prefilterOn = true
+
+local containerKinds = {
+    object = true, array = true, tuple = true, record = true, union = true, discriminatedUnion = true,
+}
+
+local safeMemo = setmetatable({}, { __mode = "k" })
+local safeTree
+
+local function allSafe(list)
+    for i = 1, #list do
+        if not safeTree(list[i]) then return false end
+    end
+    return true
+end
+
+safeTree = function(nd)
+    local memo = safeMemo[nd]
+    if memo ~= nil then return memo end
+    local kind, d = nd.kind, nd.d
+    local ok = true
+    if kind == "lazy" or not nd.pure then
+        ok = false
+    elseif containerKinds[kind] then
+        if d.limits ~= nil then
+            ok = false
+        elseif kind == "object" then
+            ok = allSafe(d.children)
+        elseif kind == "array" then
+            ok = safeTree(d.item)
+        elseif kind == "tuple" then
+            ok = allSafe(d.items) and (d.rest == nil or safeTree(d.rest))
+        elseif kind == "record" then
+            ok = safeTree(d.key) and safeTree(d.value)
+        else
+            ok = allSafe(d.variants)
+        end
+    end
+    safeMemo[nd] = ok
+    return ok
+end
+
+local function prefilter(child, lim, room)
+    if not prefilterOn or not containerKinds[child.kind] or not safeTree(child) then return nil, room end
+    if not lim.tracked then
+        local fits = lim.maxDepth - child.maxDepth
+        if fits < room then room = fits end
+        return sub(child, "_test", lim), room
+    end
+    return sub(child, "_testD", lim), room
+end
+
+function M.setPrefilter(flag)
+    prefilterOn = flag
+end
+
 testBuilders.string = function(d)
     local min, max, len = d.min, d.max, d.len
     if not (min or max or len) then
@@ -675,8 +731,13 @@ checkBuilders.object = function(d, lim)
     local n = #keys
     local get = d.meta and indexGet or rawget
     local maxDepth, maxKeys = lim.maxDepth, lim.maxKeys
-    local checks = {}
-    for i = 1, n do checks[i] = sub(children[i], "_check", lim) end
+    local checks, tests = {}, {}
+    local room = huge
+    for i = 1, n do
+        checks[i] = sub(children[i], "_check", lim)
+        tests[i], room = prefilter(children[i], lim, room)
+        tests[i] = tests[i] or false
+    end
     return function(v, path, depth, errs)
         if depth >= maxDepth then
             return emit(errs, path, depth, "too_deep", maxDepth)
@@ -686,10 +747,15 @@ checkBuilders.object = function(d, lim)
         end
         local cap = path.cap
         local nd = depth + 1
+        local use = nd <= room
         for i = 1, n do
             local key = keys[i]
-            path[nd] = key
-            errs = checks[i](get(v, key), path, nd, errs)
+            local x = get(v, key)
+            local test = use and tests[i]
+            if not (test and test(x, nd)) then
+                path[nd] = key
+                errs = checks[i](x, path, nd, errs)
+            end
             if full(errs, cap) then return errs end
         end
         if strict then errs = reportUnknownKeys(v, known, path, depth, errs, maxKeys) end
@@ -761,6 +827,7 @@ checkBuilders.array = function(d, lim)
     local min, max, len, meta = d.min, d.max, d.len, d.meta
     local maxDepth, maxKeys = lim.maxDepth, lim.maxKeys
     local itemCheck = sub(d.item, "_check", lim)
+    local itemTest, room = prefilter(d.item, lim, huge)
     local get = meta and indexGet or rawget
     return function(v, path, depth, errs)
         if depth >= maxDepth then
@@ -782,6 +849,17 @@ checkBuilders.array = function(d, lim)
         errs = checkBounds(n, min, max, len, "array", errs, path, depth)
         local cap = path.cap
         local nd = depth + 1
+        if itemTest and nd <= room then
+            for i = 1, n do
+                if full(errs, cap) then return errs end
+                local x = get(v, i)
+                if not itemTest(x, nd) then
+                    path[nd] = i
+                    errs = itemCheck(x, path, nd, errs)
+                end
+            end
+            return errs
+        end
         for i = 1, n do
             if full(errs, cap) then return errs end
             path[nd] = i
@@ -941,6 +1019,14 @@ checkBuilders.tuple = function(d, lim)
     local checks = {}
     for i = 1, count do checks[i] = sub(items[i], "_check", lim) end
     local restCheck = rest and sub(rest, "_check", lim)
+    local tests = {}
+    local room = huge
+    for i = 1, count do
+        tests[i], room = prefilter(items[i], lim, room)
+        tests[i] = tests[i] or false
+    end
+    local restTest
+    if rest then restTest, room = prefilter(rest, lim, room) end
     local get = meta and indexGet or rawget
     return function(v, path, depth, errs)
         if depth >= maxDepth then
@@ -964,16 +1050,25 @@ checkBuilders.tuple = function(d, lim)
         end
         local cap = path.cap
         local nd = depth + 1
+        local use = nd <= room
         for i = 1, count do
             if full(errs, cap) then return errs end
-            path[nd] = i
-            errs = checks[i](get(v, i), path, nd, errs)
+            local x = get(v, i)
+            local test = use and tests[i]
+            if not (test and test(x, nd)) then
+                path[nd] = i
+                errs = checks[i](x, path, nd, errs)
+            end
         end
         if restCheck then
+            local rtest = use and restTest
             for i = count + 1, n do
                 if full(errs, cap) then return errs end
-                path[nd] = i
-                errs = restCheck(get(v, i), path, nd, errs)
+                local x = get(v, i)
+                if not (rtest and rtest(x, nd)) then
+                    path[nd] = i
+                    errs = restCheck(x, path, nd, errs)
+                end
             end
         end
         return errs
@@ -1013,6 +1108,7 @@ end
 checkBuilders.record = function(d, lim)
     local maxDepth, maxKeys = lim.maxDepth, lim.maxKeys
     local keyCheck, valueCheck = sub(d.key, "_check", lim), sub(d.value, "_check", lim)
+    local valueTest, room = prefilter(d.value, lim, huge)
     return function(v, path, depth, errs)
         if depth >= maxDepth then
             return emit(errs, path, depth, "too_deep", maxDepth)
@@ -1026,12 +1122,16 @@ checkBuilders.record = function(d, lim)
         end
         local cap = path.cap
         local nd = depth + 1
+        local test = nd <= room and valueTest
         for i = 1, n do
             if full(errs, cap) then return errs end
             local k = list[i]
             path[nd] = k
             errs = keyCheck(k, path, nd, errs)
-            errs = valueCheck(rawget(v, k), path, nd, errs)
+            local x = rawget(v, k)
+            if not (test and test(x, nd)) then
+                errs = valueCheck(x, path, nd, errs)
+            end
         end
         if exotic then errs = reportExotic(exotic, path, depth, errs) end
         return errs

@@ -320,6 +320,7 @@ return function(env)
         if spec.nullable then
             parts[#parts + 1] = "nullable@" .. spec.nullable.at .. "=" .. sentinelNames[spec.nullable.sentinel]
         end
+        if spec.limits then parts[#parts + 1] = "limits=" .. show(spec.limits) end
         local out = table.concat(parts, " ")
         if spec.kind == "array" then out = out .. " of (" .. describe(spec.item) .. ")" end
         if spec.kind == "tuple" then
@@ -447,6 +448,7 @@ return function(env)
         end
         for _, m in ipairs(spec.mods or {}) do n = n[m[1]](n, m[2], m[3]) end
         n = applyImpure(n, spec)
+        if spec.limits then n = n:limits(spec.limits) end
         if spec.optional then n = n:optional() end
         return n
     end
@@ -1702,5 +1704,140 @@ return function(env)
             end
         end
         assertTrue(seen > 100)
+    end)
+
+    local EQUIV_SEED = 20261113
+    local EQUIV_SCHEMAS = 1200
+    local limitChoices = {
+        { maxDepth = 1 }, { maxDepth = 2 }, { maxDepth = 3 }, { maxDepth = 4 }, { maxDepth = 5 }, { maxKeys = 2 },
+        { maxDepth = 3, maxKeys = 3 }, { maxErrors = 1 }, { maxErrors = 3 }, { abortEarly = true },
+    }
+
+    local function decorateLimits(spec)
+        if spec.kind == "object" then
+            for _, f in ipairs(spec.fields) do decorateLimits(f.spec) end
+        elseif spec.kind == "array" then
+            decorateLimits(spec.item)
+        elseif spec.kind == "tuple" then
+            for _, item in ipairs(spec.items) do decorateLimits(item) end
+            if spec.rest then decorateLimits(spec.rest) end
+        elseif spec.kind == "record" then
+            decorateLimits(spec.value)
+        elseif spec.kind == "union" or spec.kind == "dunion" then
+            for _, variant in ipairs(spec.variants) do decorateLimits(variant) end
+        elseif spec.kind == "lazy" then
+            decorateLimits(spec.target)
+        end
+        if chance(22) then spec.limits = pick(limitChoices) end
+    end
+
+    local function dumpIssues(list)
+        local out = {}
+        for i = 1, #list do
+            local issue = list[i]
+            local keys = {}
+            for k in pairs(issue) do keys[#keys + 1] = k end
+            table.sort(keys)
+            local parts = {}
+            for _, k in ipairs(keys) do
+                local x = issue[k]
+                local text
+                if k == "path" then
+                    local p = {}
+                    for j = 1, #x do p[j] = type(x[j]) .. ":" .. tostring(x[j]) end
+                    text = table.concat(p, "/")
+                elseif k == "unionErrors" then
+                    local lists = {}
+                    for j = 1, #x do lists[j] = "[" .. dumpIssues(x[j]) .. "]" end
+                    text = table.concat(lists, ",")
+                else
+                    text = show(x)
+                end
+                parts[#parts + 1] = k .. "=" .. text
+            end
+            out[i] = table.concat(parts, ";")
+        end
+        return table.concat(out, "\n")
+    end
+
+    local function outcome(schema, data)
+        local ok, parsed, _, err = pcall(schema.safeParse, schema, data)
+        if not ok then return "throw: " .. tostring(parsed) end
+        if parsed then return "ok" end
+        return "issues:\n" .. dumpIssues(err.issues) .. "\nformat:\n" .. err:format()
+            .. "\nflatten:\n" .. show(err:flatten())
+    end
+
+    local function runVariant(spec, inputs, prefilterOn)
+        z._setPrefilter(prefilterOn)
+        forcers = {}
+        local schema = build(spec)
+        force()
+        local out = {}
+        for j = 1, INPUTS do out[j] = outcome(schema, inputs[j]) end
+        z._setPrefilter(true)
+        return out
+    end
+
+    test("fuzz: the pre-filtered error pass reports the same issues as the full walk", function()
+        reseed(EQUIV_SEED)
+        local before = z.config()
+        local previous = before.codegen
+        local cases, withIssues, wholeTree = 0, 0, 0
+        local ok, err = pcall(function()
+            for s = 1, EQUIV_SCHEMAS do
+                local spec = genSpec(0)
+                if chance(30) then decorate(spec) end
+                if chance(55) then decorateLimits(spec) end
+                z.config({
+                    maxKeys = pick({ 2, 3, 4, 10000 }), maxDepth = pick({ 2, 3, 4, 5, 64, 64, 64 }),
+                    maxErrors = pick({ 1, 3, 100 }), abortEarly = chance(10),
+                })
+                local inputs = {}
+                for j = 1, INPUTS do inputs[j] = genInput(spec) end
+                for _, codegen in ipairs({ true, false }) do
+                    z.config({ codegen = codegen })
+                    local old = runVariant(spec, inputs, false)
+                    local new = runVariant(spec, inputs, true)
+                    for j = 1, INPUTS do
+                        cases = cases + 1
+                        if old[j] ~= new[j] then
+                            error(("pre-filter mismatch on schema #%d input #%d codegen=%s\nschema: %s\ndata: %s\nold:\n%s\nnew:\n%s")
+                                :format(s, j, tostring(codegen), describe(spec), show(inputs[j]), old[j], new[j]), 0)
+                        end
+                        if old[j] ~= "ok" then withIssues = withIssues + 1 end
+                        if old[j]:find("too_deep", 1, true) then wholeTree = wholeTree + 1 end
+                    end
+                end
+            end
+        end)
+        z._setPrefilter(true)
+        z.config({
+            maxKeys = before.maxKeys, maxDepth = before.maxDepth,
+            maxErrors = before.maxErrors, abortEarly = before.abortEarly, codegen = previous,
+        })
+        if not ok then error(err, 0) end
+        print(("fuzz pre-filter: %d cases, %d with issues, %d with too_deep"):format(cases, withIssues, wholeTree))
+        assertEq(cases, EQUIV_SCHEMAS * INPUTS * 2)
+        assertTrue(withIssues >= EQUIV_SCHEMAS)
+        assertTrue(wholeTree > 0)
+    end)
+
+    test("pre-filter: a subtree under its own limits keeps its too_deep issue", function()
+        local function make()
+            local inner = z.object({ a = z.object({ b = z.object({ c = z.string() }) }) }):limits({ maxDepth = 4 })
+            return z.object({ w = z.object({ p = inner, bad = z.string() }) })
+        end
+        local data = { w = { p = { a = { b = { c = "x" } } }, bad = 1 } }
+        local function run(flag)
+            z._setPrefilter(flag)
+            local schema = make()
+            local _, _, e = schema:safeParse(data)
+            z._setPrefilter(true)
+            return dumpIssues(e.issues)
+        end
+        local old = run(false)
+        assertEq(run(true), old)
+        assertTrue(old:find("too_deep", 1, true) ~= nil)
     end)
 end

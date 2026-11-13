@@ -28,6 +28,7 @@ First stable release. Lua 5.1, 5.2, 5.3, 5.4 and LuaJIT 2.1, zero dependency.
 - Generated discriminated unions no longer repeat in the variant the table test and the discriminator check the wrapper already did (147 ns to 105 ns for 4 variants, Lua 5.4).
 - Tables with a metatable are validated by a generated raw twin of the schema instead of the closures (an array of 4 metatabled rows: 2300 ns to 1700 ns on Lua 5.4, 280 ns to 60 ns on LuaJIT); `tests/metatable_test.lua` compares both implementations on a fixed-seed fuzz.
 - Impure schemas reuse their parse context between calls (a scalar `transform`: 325 ns to 170 ns, an impure object: 2060 ns to 1650 ns on Lua 5.4). The `ctx` passed to callbacks is valid only during the call.
+- The error pass of `safeParse` and `parse` skips the valid subtrees of objects, arrays, tuples and records by running their compiled `_test` first; the issues are unchanged (an array of 1000 objects with one invalid row: 409 us to 190 us on Lua 5.4, 102 us to 10 us on LuaJIT; a nesting of depth 8: 3.17 us to 1.99 us on Lua 5.4).
 
 ### Documentation
 

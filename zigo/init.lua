@@ -122,6 +122,7 @@ local api = {
     messages = errors.messages,
     setMessages = errors.setMessages,
     _isGenerated = codegen.isGenerated,
+    _setPrefilter = closures.setPrefilter,
 }
 
 for _, spec in ipairs(closures.fixedInts) do

@@ -63,6 +63,8 @@ Hors périmètre (explicitement) :
 
 Le cas courant est l'entrée valide. On le traite avec la fonction la plus rapide possible (booléenne, sans chemin, sans table d'erreurs). Le walker de diagnostic ne tourne qu'en cas d'échec. Les mesures (§6) montrent que c'est le bon compromis : le single-pass est meilleur sur l'invalide mais plus lent sur le valide.
 
+Pré-filtre dans `_check` : avant de descendre dans un enfant conteneur (`object`, `array`, `tuple`, `record`, `union`, `discriminatedUnion`), le walker lui applique son `_test` compilé (codegen si actif, `_testD` avec la profondeur courante si les limites sont suivies) et saute l'enfant s'il passe, puisqu'un `_test` vrai garantit zéro issue. Seules les branches en échec sont parcourues par les closures de diagnostic ; l'ordre, les chemins, le plafond `maxErrors` et `abortEarly` ne changent pas. Le pré-filtre est désactivé pour les sous-arbres qui contiennent un `lazy` ou un `:limits()` propre (leur `_test` repart de la profondeur 0 alors que `_check` reçoit la profondeur de l'appelant), et quand `profondeur + maxDepth de l'enfant` dépasse la limite d'un `_test` non suivi. Les nœuds impurs gardent leur chemin (les callbacks ne s'exécutent qu'une fois). `tests/fuzz_test.lua` compare les issues avec et sans pré-filtre sur une graine fixe.
+
 ### Pourquoi codegen pour `_test`
 
 Mesure clé du prototype : **en LuaJIT, des closures composées sont ~10× plus lentes qu'un if-chain écrit à la main** (464 ns contre 42 ns). La boucle `for i = 1, n do tests[i](v[keys[i]]) end` est un site d'appel polymorphe que le JIT ne spécialise pas. Le code généré (une seule fonction plate, champs déroulés) **égale voire bat le code écrit à la main** (33 ns). C'est aussi l'approche de `api7/jsonschema`.
